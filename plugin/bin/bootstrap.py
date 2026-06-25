@@ -5,10 +5,13 @@ Idempotent: installs the slpy CLI once into the plugin's persistent data dir and
 reuses it across sessions. Re-installs only when the bundled wheel changes (version
 bump). A no-op on every subsequent session.
 
-POC scope:
-  - slpy source = the wheel bundled in the plugin (vendor/). Later this becomes the
-    private index (CodeArtifact via broker, or self-hosted PyPI) — only INDEX changes.
-  - auth = none yet (local wheel needs none). Later: a one-time SnapLogic login here.
+Scope:
+  - slpy source: POC uses a wheel bundled in vendor/ (local testing only; never in the
+    public repo). Production installs from the private index (CodeArtifact via broker,
+    or self-hosted PyPI) — only the index URL changes.
+  - MCP auth: the user sets SnapLogic credentials in their OWN environment
+    (SNAPLOGIC_API_USER/PASS or SNAPLOGIC_SLTOKEN) per the SnapCode setup docs. This
+    script only installs the auth helper; it never reads a repo .env or handles creds.
 
 Design notes (why it's written this way):
   - Invoked via hook EXEC form (command="python", args=[this file]) so NO shell is
@@ -40,7 +43,6 @@ STAMP = PLUGIN_DATA / "installed_wheel.txt"   # records which wheel is installed
 AUTH_DIR = Path.home() / ".claude" / "snapcode"
 HELPER_SRC = PLUGIN_ROOT / "bin" / "mcp_headers.py"
 HELPER_DST = AUTH_DIR / "mcp_headers.py"
-CREDS_DST = AUTH_DIR / "creds.env"
 
 
 def log(msg: str) -> None:
@@ -102,25 +104,22 @@ def install_slpy(uv: str, wheel: Path) -> bool:
 
 
 def install_auth_helper() -> None:
-    """Copy the MCP auth helper to its fixed path and seed creds (POC: from repo .env).
+    """Install the MCP auth helper to its fixed path.
 
-    Idempotent. The headersHelper in .mcp.json calls AUTH_DIR/mcp_headers.py.
+    Idempotent. The headersHelper in .mcp.json calls AUTH_DIR/mcp_headers.py; that
+    helper reads the user's SnapLogic credentials from their ENVIRONMENT
+    (SNAPLOGIC_API_USER/PASS or SNAPLOGIC_SLTOKEN), which Claude Code passes through
+    to the helper — verified. So this function only places the helper script; it does
+    NOT handle credentials and never touches a repo .env. Users set their credentials
+    in their own environment per the SnapCode setup docs.
     """
     try:
         AUTH_DIR.mkdir(parents=True, exist_ok=True)
         if HELPER_SRC.exists():
             shutil.copy2(HELPER_SRC, HELPER_DST)
-        # POC: seed creds.env from the repo .env if we can find it and creds.env is absent.
-        if not CREDS_DST.exists():
-            repo_env = Path(os.environ.get("CLAUDE_PROJECT_DIR", PLUGIN_ROOT.parent)) / ".env"
-            if repo_env.exists():
-                wanted = ("SNAPLOGIC_API_USER", "SNAPLOGIC_API_PASS", "SNAPLOGIC_SLTOKEN")
-                lines = [ln for ln in repo_env.read_text(encoding="utf-8").splitlines()
-                         if ln.split("=", 1)[0].strip() in wanted]
-                if lines:
-                    CREDS_DST.write_text("\n".join(lines) + "\n")
-                    log(f"seeded creds → {CREDS_DST}")
-        log(f"auth helper ready at {HELPER_DST}")
+            log(f"auth helper ready at {HELPER_DST}")
+        else:
+            log(f"auth helper source missing: {HELPER_SRC}")
     except Exception as e:  # never break the session over auth-helper setup
         log(f"auth helper setup skipped: {e}")
 

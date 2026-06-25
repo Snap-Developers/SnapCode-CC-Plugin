@@ -5,14 +5,23 @@ skills, cloud MCP, and the slpy CLI — with one command. No repo to clone, no c
 
 ## Install
 
-```bash
-# add this marketplace, then install the plugin
-claude plugin marketplace add Snap-Developers/SnapCode
-claude plugin install snapcode@snapcode
-```
+See **[docs/setup.md](docs/setup.md)** for the full guide. In short:
 
-That's it — the plugin brings the SnapCode skills, wires up the cloud MCP server, and
-(in production) installs the `slpy` CLI on demand.
+1. **Prerequisites:** Claude Code CLI, Python 3.8+, Node.js 18+ (uv is auto-installed if missing).
+2. **Set your SnapLogic credentials in your environment** (not GitHub/AWS):
+   ```bash
+   export SNAPLOGIC_API_USER="you@yourcompany.com"
+   export SNAPLOGIC_API_PASS="your-password"
+   # or:  export SNAPLOGIC_SLTOKEN="your-sltoken"
+   ```
+3. **Install the plugin:**
+   ```bash
+   claude plugin marketplace add Snap-Developers/SnapCode
+   claude plugin install snapcode@snapcode
+   ```
+
+Then start Claude Code — the plugin loads the skills, connects to the cloud MCP using
+your credentials, and installs the `slpy` CLI on demand.
 
 ## What's in here
 

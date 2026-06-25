@@ -8,7 +8,7 @@
     {
       "name": "snapcode",
       "source": "./plugin",
-      "description": "SnapLogic SnapCode — skills, cloud MCP, and the slpy CLI auto-installed on demand."
+      "description": "SnapLogic SnapCode — skills, cloud MCP, and the slpy CLI auto-installed."
     }
   ]
 }
