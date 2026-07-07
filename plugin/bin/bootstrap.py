@@ -1,30 +1,44 @@
 #!/usr/bin/env python3
 """SnapCode plugin bootstrap — runs on every SessionStart, cross-platform (macOS + Windows).
 
-Idempotent: installs the slpy CLI once into the plugin's persistent data dir and
-reuses it across sessions. Re-installs only when the bundled wheel changes (version
-bump). A no-op on every subsequent session.
+Installs the slpy CLI into the plugin's persistent data dir and keeps it reasonably
+fresh, without hitting the network on every session.
 
-Scope:
-  - slpy source: POC uses a wheel bundled in vendor/ (local testing only; never in the
-    public repo). Production installs from the private index (CodeArtifact via broker,
-    or self-hosted PyPI) — only the index URL changes.
-  - MCP auth: the user sets SnapLogic credentials in their OWN environment
-    (SNAPLOGIC_API_USER/PASS or SNAPLOGIC_SLTOKEN) per the SnapCode setup docs. This
-    script only installs the auth helper; it never reads a repo .env or handles creds.
+slpy source (in priority order):
+  1. The token broker — bootstrap POSTs the user's SnapLogic credentials to the broker
+     (SNAPCODE_BROKER_URL), gets back a short-lived private-index URL, and installs slpy
+     from the real sl-pypi. This is the production path. Users need no AWS/GitHub.
+  2. A bundled wheel in vendor/ — local POC fallback only (never shipped in the public repo).
 
-Design notes (why it's written this way):
-  - Invoked via hook EXEC form (command="python", args=[this file]) so NO shell is
-    involved — avoids the bash-vs-PowerShell problem on Windows. All logic is Python.
-  - slpy installs into ${CLAUDE_PLUGIN_DATA} (persists across sessions + plugin updates,
-    auto-removed on uninstall), NOT the cwd.
-  - Never hard-fails the session: on any error it prints a hint and exits 0.
+Update cadence: slpy publishes very frequently, so we DON'T check every session. We check
+at most once per TTL window (default 24h). Between checks, an already-installed slpy is
+used as-is — no broker call, no network. Channel: develop (newest) for now.
+
+MCP auth: handled separately — this script also copies the MCP auth helper to a fixed
+path (~/.claude/snapcode/). The helper reads the user's SnapLogic credentials from their
+ENVIRONMENT; this script never handles credentials or reads a repo .env.
+
+Design notes:
+  - Invoked via hook EXEC form (command="python3", args=[this file]) so NO shell is
+    involved — this is the documented cross-platform pattern and avoids the
+    sh-vs-PowerShell problem (a shell-form "a || b" breaks on Windows PowerShell 5.1,
+    which lacks the || operator). If python3 is absent on a Windows host so the hook
+    doesn't fire, the slpy launcher (bin/slpy + slpy.cmd) re-runs this bootstrap via
+    sys.executable on the first `slpy` call, so setup still completes. All logic here
+    is Python.
+  - slpy installs into ${CLAUDE_PLUGIN_DATA} (persists across sessions + plugin updates).
+  - The broker token is passed to uv via ENV (UV_INDEX_* / UV_DEFAULT_INDEX), never on
+    the command line, so it doesn't leak into shell history or process listings.
+  - Never hard-fails the session: on any error it logs a hint and exits 0.
 """
 
+import json
 import os
 import shutil
 import subprocess
 import sys
+import time
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -34,26 +48,27 @@ PLUGIN_DATA = Path(os.environ.get("CLAUDE_PLUGIN_DATA", PLUGIN_ROOT / ".data"))
 VENDOR_DIR = PLUGIN_ROOT / "vendor"
 TOOL_DIR = PLUGIN_DATA / "tools"        # where uv installs slpy
 BIN_DIR = PLUGIN_DATA / "bin"           # where the slpy executable lands
-STAMP = PLUGIN_DATA / "installed_wheel.txt"   # records which wheel is installed
+LAST_CHECK = PLUGIN_DATA / "last_check"  # timestamp of last broker/index check
 
-# Fixed install location for the MCP auth helper. It must live at a stable, plugin-
-# independent path because headersHelper can't locate files inside the plugin
-# (${CLAUDE_PLUGIN_ROOT} isn't expanded there). The .mcp.json headersHelper targets
-# ~/.claude/snapcode/mcp_headers.py (cross-platform via `~`).
+# Broker: POC defaults to localhost; production points at the hosted broker URL.
+BROKER_URL = os.environ.get("SNAPCODE_BROKER_URL", "http://127.0.0.1:8080")
+# How often to check the index for a newer slpy (seconds). slpy publishes often, so a
+# daily check keeps users current without a broker call every session.
+CHECK_TTL = int(os.environ.get("SNAPCODE_CHECK_TTL", str(24 * 3600)))
+
+# Fixed install location for the MCP auth helper (headersHelper can't see the plugin dir).
 AUTH_DIR = Path.home() / ".claude" / "snapcode"
 HELPER_SRC = PLUGIN_ROOT / "bin" / "mcp_headers.py"
 HELPER_DST = AUTH_DIR / "mcp_headers.py"
+
+SLPY_EXE = BIN_DIR / ("slpy.exe" if os.name == "nt" else "slpy")
 
 
 def log(msg: str) -> None:
     print(f"[snapcode-bootstrap] {msg}", file=sys.stderr)
 
 
-def find_wheel() -> Optional[Path]:
-    wheels = sorted(VENDOR_DIR.glob("slpy-*.whl"))
-    return wheels[-1] if wheels else None
-
-
+# ── uv ────────────────────────────────────────────────────────────────────────
 def ensure_uv() -> Optional[str]:
     """Return path to uv, installing it if missing. Cross-platform."""
     uv = shutil.which("uv")
@@ -61,21 +76,15 @@ def ensure_uv() -> Optional[str]:
         return uv
     log("uv not found on PATH — installing…")
     try:
-        if os.name == "nt":  # Windows → PowerShell installer
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "irm https://astral.sh/uv/install.ps1 | iex"],
-                check=True,
-            )
-        else:  # macOS / Linux
-            subprocess.run(
-                "curl -LsSf https://astral.sh/uv/install.sh | sh",
-                shell=True, check=True,
-            )
+        if os.name == "nt":
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                            "irm https://astral.sh/uv/install.ps1 | iex"], check=True)
+        else:
+            subprocess.run("curl -LsSf https://astral.sh/uv/install.sh | sh",
+                           shell=True, check=True)
     except subprocess.CalledProcessError as e:
         log(f"failed to install uv: {e}")
         return None
-    # uv installs to a user dir not yet on this process's PATH — probe known locations.
     for cand in (shutil.which("uv"),
                  str(Path.home() / ".local" / "bin" / "uv"),
                  str(Path.home() / ".cargo" / "bin" / "uv"),
@@ -85,34 +94,87 @@ def ensure_uv() -> Optional[str]:
     return None
 
 
-def already_installed(wheel: Path) -> bool:
-    return STAMP.exists() and STAMP.read_text().strip() == wheel.name
-
-
-def install_slpy(uv: str, wheel: Path) -> bool:
-    PLUGIN_DATA.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, UV_TOOL_DIR=str(TOOL_DIR), UV_TOOL_BIN_DIR=str(BIN_DIR))
-    log(f"installing {wheel.name} → {PLUGIN_DATA}")
+# ── timing ────────────────────────────────────────────────────────────────────
+def check_due() -> bool:
+    """True if we haven't checked the index within the TTL window."""
+    if not SLPY_EXE.exists():
+        return True  # not installed yet — must install
+    if not LAST_CHECK.exists():
+        return True
     try:
-        subprocess.run([uv, "tool", "install", "--force", str(wheel)],
-                       env=env, check=True)
+        last = float(LAST_CHECK.read_text().strip())
+    except Exception:
+        return True
+    return (time.time() - last) >= CHECK_TTL
+
+
+def mark_checked() -> None:
+    PLUGIN_DATA.mkdir(parents=True, exist_ok=True)
+    LAST_CHECK.write_text(str(time.time()))
+
+
+# ── broker ──────────────────────────────────────────────────────────────────--
+def fetch_index_url() -> Optional[str]:
+    """Ask the broker for a private-index URL using the user's SnapLogic credentials.
+
+    Credentials come from the user's environment (SNAPLOGIC_API_USER/PASS). Returns a
+    token-embedded index URL, or None if creds are missing or the broker call fails.
+    """
+    user = os.environ.get("SNAPLOGIC_API_USER")
+    pw = os.environ.get("SNAPLOGIC_API_PASS")
+    if not (user and pw):
+        log("SNAPLOGIC_API_USER/PASS not set; cannot reach broker. See SnapCode setup docs.")
+        return None
+    import base64
+    auth = "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
+    req = urllib.request.Request(f"{BROKER_URL}/token", method="POST",
+                                 headers={"Authorization": auth})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.load(r).get("index_url")
+    except Exception as e:
+        log(f"broker request failed ({BROKER_URL}): {e}")
+        return None
+
+
+def install_slpy_from_index(uv: str, index_url: str) -> bool:
+    """Install/update slpy from the private index. Token is passed via ENV, not argv."""
+    PLUGIN_DATA.mkdir(parents=True, exist_ok=True)
+    # Pass the token-bearing index URL through the environment so it never appears on
+    # the command line (shell history / ps). uv reads UV_DEFAULT_INDEX.
+    env = dict(os.environ,
+               UV_TOOL_DIR=str(TOOL_DIR), UV_TOOL_BIN_DIR=str(BIN_DIR),
+               UV_DEFAULT_INDEX=index_url)
+    log("installing/updating slpy from the private index…")
+    try:
+        subprocess.run([uv, "tool", "install", "--force", "slpy"], env=env, check=True)
     except subprocess.CalledProcessError as e:
         log(f"slpy install failed: {e}")
         return False
-    STAMP.write_text(wheel.name)
     return True
 
 
-def install_auth_helper() -> None:
-    """Install the MCP auth helper to its fixed path.
+# ── local wheel fallback (POC only) ────────────────────────────────────────────
+def find_wheel() -> Optional[Path]:
+    wheels = sorted(VENDOR_DIR.glob("slpy-*.whl"))
+    return wheels[-1] if wheels else None
 
-    Idempotent. The headersHelper in .mcp.json calls AUTH_DIR/mcp_headers.py; that
-    helper reads the user's SnapLogic credentials from their ENVIRONMENT
-    (SNAPLOGIC_API_USER/PASS or SNAPLOGIC_SLTOKEN), which Claude Code passes through
-    to the helper — verified. So this function only places the helper script; it does
-    NOT handle credentials and never touches a repo .env. Users set their credentials
-    in their own environment per the SnapCode setup docs.
-    """
+
+def install_slpy_from_wheel(uv: str, wheel: Path) -> bool:
+    PLUGIN_DATA.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, UV_TOOL_DIR=str(TOOL_DIR), UV_TOOL_BIN_DIR=str(BIN_DIR))
+    log(f"installing slpy from bundled wheel {wheel.name} (POC fallback)…")
+    try:
+        subprocess.run([uv, "tool", "install", "--force", str(wheel)], env=env, check=True)
+    except subprocess.CalledProcessError as e:
+        log(f"slpy install failed: {e}")
+        return False
+    return True
+
+
+# ── auth helper ─────────────────────────────────────────────────────────────--
+def install_auth_helper() -> None:
+    """Place the MCP auth helper at its fixed path (it reads creds from the env at runtime)."""
     try:
         AUTH_DIR.mkdir(parents=True, exist_ok=True)
         if HELPER_SRC.exists():
@@ -120,27 +182,16 @@ def install_auth_helper() -> None:
             log(f"auth helper ready at {HELPER_DST}")
         else:
             log(f"auth helper source missing: {HELPER_SRC}")
-    except Exception as e:  # never break the session over auth-helper setup
+    except Exception as e:
         log(f"auth helper setup skipped: {e}")
 
 
+# ── main ───────────────────────────────────────────────────────────────────--
 def main() -> int:
-    install_auth_helper()
+    install_auth_helper()  # independent of slpy — MCP must work even if slpy isn't installed
 
-    wheel = find_wheel()
-    if not wheel:
-        # No bundled wheel — this is the normal case for the PUBLIC repo (the private
-        # slpy source is never shipped here). In production, slpy installs from the
-        # private index instead:
-        #   uv tool install slpy --index-url <broker-provided CodeArtifact URL>
-        # That path needs the token broker (SnapLogic identity -> download token),
-        # which is still being built. Until then, slpy is not auto-installed from here.
-        log("no bundled wheel (expected in the public repo); slpy installs from the "
-            "private index in production — pending the token broker. Skipping for now.")
-        return 0
-
-    if already_installed(wheel):
-        log(f"slpy up to date ({wheel.name}) — nothing to do")
+    if not check_due():
+        log(f"slpy present and checked within {CHECK_TTL // 3600}h — skipping")
         return 0
 
     uv = ensure_uv()
@@ -148,10 +199,22 @@ def main() -> int:
         log("uv unavailable; cannot install slpy. Install uv and restart the session.")
         return 0
 
-    if install_slpy(uv, wheel):
-        exe = "slpy.exe" if os.name == "nt" else "slpy"
-        log("done. slpy installed at: " + str(BIN_DIR / exe))
-        log(f"add to PATH for this session: {BIN_DIR}")
+    # Preferred path: install/update from the private index via the broker.
+    index_url = fetch_index_url()
+    if index_url and install_slpy_from_index(uv, index_url):
+        mark_checked()
+        log(f"done. slpy ready at {SLPY_EXE}")
+        return 0
+
+    # Fallback: bundled wheel (local POC only; not present in the public repo).
+    wheel = find_wheel()
+    if wheel and install_slpy_from_wheel(uv, wheel):
+        mark_checked()
+        log(f"done (wheel fallback). slpy ready at {SLPY_EXE}")
+        return 0
+
+    log("slpy not installed: broker unavailable and no bundled wheel. "
+        "Check SNAPCODE_BROKER_URL and your SnapLogic credentials (see setup docs).")
     return 0
 
 
