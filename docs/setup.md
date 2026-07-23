@@ -22,21 +22,29 @@ SnapCode authenticates to the SnapLogic cloud with **your existing SnapLogic
 credentials** — set them in your own shell environment. These are SnapLogic platform
 credentials, **not** GitHub or AWS.
 
-Set your SnapLogic username (email) and password:
+Set three values: your SnapLogic username (email) + password, and your pod's base URL.
 
 ```bash
 # macOS / Linux (add to ~/.zshrc or ~/.bashrc to persist)
 export SNAPLOGIC_API_USER="you@yourcompany.com"
 export SNAPLOGIC_API_PASS="your-password"
+export SNAPLOGIC_BASE_URL="https://your-pod.snaplogic.com"
 ```
 ```powershell
 # Windows PowerShell (use [Environment]::SetEnvironmentVariable to persist)
 $env:SNAPLOGIC_API_USER = "you@yourcompany.com"
 $env:SNAPLOGIC_API_PASS = "your-password"
+$env:SNAPLOGIC_BASE_URL = "https://your-pod.snaplogic.com"
 ```
 
-> Set these **before** starting Claude Code, in the same shell, so the plugin's auth
-> helper can read them. If you change them, restart Claude Code.
+| Variable | What it is |
+|---|---|
+| `SNAPLOGIC_API_USER` / `_PASS` | Your SnapLogic platform login (email + password). **Not** GitHub/AWS. |
+| `SNAPLOGIC_BASE_URL` | Your pod URL — the same host you use for the SnapLogic UI / MCP endpoint. |
+
+> Set these **before** starting Claude Code, in the same shell, so the plugin can read
+> them. `SNAPLOGIC_BASE_URL` is used to fetch the slpy installer; `SNAPLOGIC_API_USER/PASS`
+> also authenticate the cloud MCP. If you change any, restart Claude Code.
 
 ## 3. Install the plugin
 
