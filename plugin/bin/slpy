@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pro Code `slpy` launcher (cross-platform).
+"""SnapCode `slpy` launcher (cross-platform).
 
 Lives in the plugin's bin/, which Claude Code adds to the Bash tool's PATH while the
 plugin is enabled — so a bare `slpy ...` from the agent resolves HERE, ahead of any
@@ -28,7 +28,7 @@ def main() -> int:
         subprocess.run([sys.executable, str(BOOTSTRAP)], check=False)
     if not REAL_SLPY.exists():
         sys.stderr.write(
-            "[procode] slpy is not installed yet and bootstrap did not produce it.\n"
+            "[snapcode] slpy is not installed yet and bootstrap did not produce it.\n"
             f"          expected: {REAL_SLPY}\n"
         )
         return 1

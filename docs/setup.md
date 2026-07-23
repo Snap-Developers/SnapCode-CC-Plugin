@@ -41,7 +41,7 @@ $env:SNAPLOGIC_API_PASS = "your-password"
 ## 3. Install the plugin
 
 ```bash
-claude plugin marketplace add Snap-Developers/SnapCode
+claude plugin marketplace add Snap-Developers/SnapCode-CC-Plugin
 claude plugin install snapcode@snapcode
 ```
 
