@@ -22,28 +22,36 @@ SnapCode authenticates to the SnapLogic cloud with **your existing SnapLogic
 credentials** — set them in your own shell environment. These are SnapLogic platform
 credentials, **not** GitHub or AWS.
 
-Set three values: your SnapLogic username (email) + password, and your pod's base URL.
+Set your SnapLogic credentials, pod URL, and org identifier.
 
 ```bash
 # macOS / Linux (add to ~/.zshrc or ~/.bashrc to persist)
 export SNAPLOGIC_API_USER="you@yourcompany.com"
 export SNAPLOGIC_API_PASS="your-password"
 export SNAPLOGIC_BASE_URL="https://your-pod.snaplogic.com"
+
+# Identify your org — use one of these two (ID takes priority if both are set):
+export SNAPCODE_ORG_ID="your-24-char-org-id"   # exact hex ID — found in Manager > Settings
+# or:
+export SNAPCODE_ORG_NAME="your-org-name"        # e.g. "mycompany" — bootstrap resolves the ID automatically
 ```
 ```powershell
 # Windows PowerShell (use [Environment]::SetEnvironmentVariable to persist)
 $env:SNAPLOGIC_API_USER = "you@yourcompany.com"
 $env:SNAPLOGIC_API_PASS = "your-password"
 $env:SNAPLOGIC_BASE_URL = "https://your-pod.snaplogic.com"
+$env:SNAPCODE_ORG_ID = "your-24-char-org-id"    # or use SNAPCODE_ORG_NAME below
+$env:SNAPCODE_ORG_NAME = "your-org-name"
 ```
 
 | Variable | What it is |
 |---|---|
 | `SNAPLOGIC_API_USER` / `_PASS` | Your SnapLogic platform login (email + password). **Not** GitHub/AWS. |
 | `SNAPLOGIC_BASE_URL` | Your pod URL — the same host you use for the SnapLogic UI / MCP endpoint. |
+| `SNAPCODE_ORG_ID` | Your org's 24-char hex ID. Find it in Manager → your org → Settings → "Organization Id". |
+| `SNAPCODE_ORG_NAME` | Your org name (e.g. `mycompany`). If set without `SNAPCODE_ORG_ID`, bootstrap looks up the ID automatically. |
 
-> Set these **before** starting Claude Code, in the same shell, so the plugin can read
-> them. `SNAPLOGIC_BASE_URL` is used to fetch the slpy installer; `SNAPLOGIC_API_USER/PASS`
+> Set these **before** starting Claude Code, in the same shell. `SNAPLOGIC_API_USER/PASS`
 > also authenticate the cloud MCP. If you change any, restart Claude Code.
 
 ## 3. Install the plugin

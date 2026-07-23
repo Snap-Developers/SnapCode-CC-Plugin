@@ -6,10 +6,12 @@ fresh, without hitting the network on every session.
 
 slpy source:
   The SLServer installer endpoint (which fronts the token broker) — bootstrap GETs
-  {SNAPLOGIC_BASE_URL}/api/1/rest/slserver/snapcode/{SNAPCODE_ORG_ID}/fetch_installer
+  {SNAPLOGIC_BASE_URL}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer
   with the user's SnapLogic credentials (Basic auth). The endpoint returns a short-lived
-  private-index URL ({"index_url": ...}), and bootstrap installs slpy from the real
-  sl-pypi. Users need no AWS/GitHub.
+  private-index URL ({"response_map": [{"index_url": ...}]}), and bootstrap installs slpy
+  from the real sl-pypi. Users need no AWS/GitHub.
+  org_id is resolved from SNAPCODE_ORG_ID (direct hex ID) or SNAPCODE_ORG_NAME (bootstrap
+  looks it up via /api/1/rest/public/users/{email}).
 
 Update cadence: slpy publishes very frequently, so we DON'T check every session. We check
 at most once per TTL window (default 24h). Between checks, an already-installed slpy is
@@ -28,8 +30,8 @@ Design notes:
     sys.executable on the first `slpy` call, so setup still completes. All logic here
     is Python.
   - slpy installs into ${CLAUDE_PLUGIN_DATA} (persists across sessions + plugin updates).
-  - The broker token is passed to uv via ENV (UV_INDEX_* / UV_DEFAULT_INDEX), never on
-    the command line, so it doesn't leak into shell history or process listings.
+  - The broker token is passed to uv via ENV (UV_DEFAULT_INDEX), never on the command
+    line, so it doesn't leak into shell history or process listings.
   - Never hard-fails the session: on any error it logs a hint and exits 0.
 """
 
@@ -52,13 +54,15 @@ LAST_CHECK = PLUGIN_DATA / "last_check"  # timestamp of last broker/index check
 
 # The installer endpoint lives on the SnapLogic SLServer:
 #   {base_url}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer
-# base_url = the user's pod (same as the MCP endpoint); org_id = the user's SnapLogic org.
-# Both come from the user's environment. GET + Basic auth returns {index_url: ...}.
+# base_url = the user's pod (same host as the MCP endpoint), from the user's environment.
 SNAPLOGIC_BASE_URL = os.environ.get("SNAPLOGIC_BASE_URL", "").rstrip("/")
-# The installer endpoint's org path segment is FIXED — it's the org where the SnapCode
-# installer SLServer endpoint lives, the same for every user (NOT the caller's own org).
-# Overridable via env only for testing against a different deployment.
-SNAPCODE_ORG_ID = os.environ.get("SNAPCODE_ORG_ID", "5be4a4cded5edc0017b9aa70")
+# Org ID for the fetch_installer URL path. Two ways to provide it (ID takes priority):
+#   SNAPCODE_ORG_ID  — the 24-char hex org ID directly (e.g. from Manager > Settings)
+#   SNAPCODE_ORG_NAME — the org name (e.g. "mycompany"); bootstrap resolves it to an ID
+#                       via GET /api/1/rest/public/users/{email} on first run.
+# If neither is set, bootstrap logs a hint and skips slpy installation.
+SNAPCODE_ORG_ID = os.environ.get("SNAPCODE_ORG_ID", "")
+SNAPCODE_ORG_NAME = os.environ.get("SNAPCODE_ORG_NAME", "")
 # How often to check the index for a newer slpy (seconds). slpy publishes often, so a
 # daily check keeps users current without a broker call every session.
 CHECK_TTL = int(os.environ.get("SNAPCODE_CHECK_TTL", str(24 * 3600)))
@@ -121,6 +125,53 @@ def mark_checked() -> None:
 
 
 # ── installer endpoint (SLServer) ─────────────────────────────────────────────
+def _make_auth_header(user: str, pw: str) -> str:
+    import base64
+    return "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
+
+
+def resolve_org_id(user: str, pw: str) -> Optional[str]:
+    """Resolve org ID from SNAPCODE_ORG_ID (direct) or SNAPCODE_ORG_NAME (lookup).
+
+    Priority:
+      1. SNAPCODE_ORG_ID — used as-is (no network call needed)
+      2. SNAPCODE_ORG_NAME — resolved via GET /api/1/rest/public/users/{email},
+         which returns the user's org list with IDs. No admin required.
+
+    Returns the org ID string, or None if it can't be determined.
+    """
+    import urllib.parse
+
+    if SNAPCODE_ORG_ID:
+        return SNAPCODE_ORG_ID
+
+    if not SNAPCODE_ORG_NAME:
+        log("Neither SNAPCODE_ORG_ID nor SNAPCODE_ORG_NAME is set. "
+            "Set one of them to install slpy. See SnapCode setup docs.")
+        return None
+
+    # Look up org ID from org name via the platform user API.
+    url = f"{SNAPLOGIC_BASE_URL}/api/1/rest/public/users/{urllib.parse.quote(user, safe='')}"
+    req = urllib.request.Request(url, headers={"Authorization": _make_auth_header(user, pw)})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            orgs = json.load(r).get("organizations", [])
+    except Exception as e:
+        log(f"org lookup failed ({url}): {e} — set SNAPCODE_ORG_ID directly to skip lookup.")
+        return None
+
+    matches = [o for o in orgs if o.get("name", "").lower() == SNAPCODE_ORG_NAME.lower()]
+    if not matches:
+        names = [o.get("name") for o in orgs]
+        log(f"org '{SNAPCODE_ORG_NAME}' not found. Available: {names}. "
+            "Check SNAPCODE_ORG_NAME or use SNAPCODE_ORG_ID directly.")
+        return None
+
+    org_id = matches[0]["id"]
+    log(f"resolved org '{SNAPCODE_ORG_NAME}' → {org_id}")
+    return org_id
+
+
 def fetch_index_url() -> Optional[str]:
     """Ask the SLServer installer endpoint for a private-index URL.
 
@@ -128,8 +179,8 @@ def fetch_index_url() -> Optional[str]:
     SnapLogic credentials (Basic auth). The endpoint verifies the caller and returns
     {"response_map": [{"index_url": "<token-embedded private index URL>", "expires_in": N}]}.
 
-    Credentials + base_url come from the user's environment; org_id is fixed. Returns the
-    index URL, or None if anything required is missing or the call fails.
+    Org ID is resolved from SNAPCODE_ORG_ID (direct) or SNAPCODE_ORG_NAME (lookup).
+    Returns the index URL, or None if anything required is missing or the call fails.
     """
     user = os.environ.get("SNAPLOGIC_API_USER")
     pw = os.environ.get("SNAPLOGIC_API_PASS")
@@ -139,18 +190,21 @@ def fetch_index_url() -> Optional[str]:
     if not SNAPLOGIC_BASE_URL:
         log("SNAPLOGIC_BASE_URL not set; cannot fetch installer. See SnapCode setup docs.")
         return None
-    import base64
-    auth = "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
-    url = f"{SNAPLOGIC_BASE_URL}/api/1/rest/slserver/snapcode/{SNAPCODE_ORG_ID}/fetch_installer"
-    req = urllib.request.Request(url, method="GET", headers={"Authorization": auth})
+
+    org_id = resolve_org_id(user, pw)
+    if not org_id:
+        return None
+
+    url = f"{SNAPLOGIC_BASE_URL}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer"
+    req = urllib.request.Request(url, method="GET",
+                                 headers={"Authorization": _make_auth_header(user, pw)})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             body = json.load(r)
     except Exception as e:
         log(f"installer request failed ({url}): {e}")
         return None
-    # Response shape: {"response_map": [{"index_url": ...}]} (list). Fall back to a flat
-    # {"index_url": ...} just in case the endpoint shape changes.
+    # Response shape: {"response_map": [{"index_url": ...}]} (list). Fall back to flat shape.
     rmap = body.get("response_map")
     if isinstance(rmap, list) and rmap:
         return rmap[0].get("index_url")
@@ -211,8 +265,7 @@ def main() -> int:
         return 0
 
     log("slpy not installed: installer endpoint unreachable or credentials missing. "
-        "Check SNAPLOGIC_BASE_URL, SNAPCODE_ORG_ID, and your SnapLogic credentials "
-        "(see setup docs).")
+        "Check SNAPLOGIC_BASE_URL and your SnapLogic credentials (see setup docs).")
     return 0
 
 
