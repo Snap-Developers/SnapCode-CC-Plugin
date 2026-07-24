@@ -1,7 +1,7 @@
 ---
 name: snaplogic-deploy
 description: "Deploy, validate, and iteratively fix SnapLogic pipelines on the Control Plane. Covers the full loop: translate .py → .slp, upload supporting files, import to platform, validate, surface errors, fix source, repeat until validation passes."
-tools: Read, Write, Bash, TodoWrite, mcp__snaplogic-platform__import_pipeline, mcp__snaplogic-platform__validate_pipeline, mcp__snaplogic-platform__execute_pipeline, mcp__snaplogic-platform__list_snaplexes, mcp__snaplogic-platform__save_user_preferences, mcp__snaplogic-platform__upload_sldb
+tools: Read, Write, Bash, TodoWrite, mcp__snaplogic__import_pipeline, mcp__snaplogic__validate_pipeline, mcp__snaplogic__execute_pipeline, mcp__snaplogic__list_snaplexes, mcp__snaplogic__save_user_preferences, mcp__snaplogic__upload_sldb
 ---
 
 # SnapLogic Deploy Skill
@@ -20,33 +20,66 @@ Invoke when the user wants to:
 
 ---
 
-## 2. Workflow
+## 2. SnapLogic Concepts & Terminology
 
-> ### ⚠️ File-path convention for platform MCP tools (READ FIRST)
+Deploying correctly depends on getting SnapLogic's structure right. Read this before the workflow — most deploy failures come from confusing these terms (e.g. passing a project name where an org is expected).
+
+### The hierarchy
+
+```
+Control Plane (SnapLogic-hosted)
+  └── Org (tenant)                    e.g. "snaplogic", "ConnectFasterInc"
+        ├── Project Space             e.g. "projects", a per-user space
+        │     └── Project             e.g. "MyProject"  ← holds assets
+        │           └── Assets: Pipeline, File, Account, Task, ...
+        └── Snaplex                   org-level, shared across projects
+```
+
+Assets live at `{org}/{project_space}/{project}/{asset}`. `shared` is a special **Project** that sits directly under the org (so `{org}/shared/{asset}`).
+
+### Terms
+
+- **Control Plane** — the SnapLogic-hosted management layer (metadata, orchestration, scheduling, monitoring). The MCP server talks to it via `SNAPLOGIC_BASE_URL`. Distinct from the *execution plane* where data actually flows.
+- **Org (Organization)** — the top-level tenant. Contains project spaces and Snaplexes. This is the **`org`** parameter (the org **name**, e.g. `snaplogic`) on nearly every MCP tool.
+- **Project Space** — the grouping level directly under the org. **Contains Projects.**
+- **Project** — the leaf container that actually holds assets (pipelines, files, accounts…). `shared` is a project directly under the org.
+- **`project_path`** (MCP parameter) — the path to a project **within the org, WITHOUT the org name** — e.g. `projects/MyProject`, or just `shared`. The server prepends the org itself. When a user names "the **X** project", that's the `project_path`, **NOT the org** — never pass a project name as `org`.
+- **Asset** — any addressable object in a project. Types: **Pipeline, Task (asset type `Job`), File, Account, Policy, Flows**. A pipeline is one asset.
+- **Pipeline** — a data-integration flow (stored as SLP/JSON); the unit you import/validate/execute. **Snap** — one processing node *inside* a pipeline (read/transform/write step); not separately addressable.
+- **Snaplex** — the execution engine (a cluster of JCC nodes) that runs pipelines. It is **org-level and shared, not under a project** — so `list_snaplexes` needs the **org**, not a project. Types: **Cloudplex** (SnapLogic-hosted) and **Groundplex** (customer-hosted, e.g. for local-file access).
+- **`snaplex_path` / `runtime_path_id`** — the routing id of a Snaplex, format `<org_id>/rt/<location>/<environment>` (e.g. `snaplogic/rt/cloud/dev`). A Snaplex has both a browse `path` (a label) and a `runtime_path_id`; the MCP `snaplex_path` parameter wants the **`runtime_path_id`**. Discover both via `list_snaplexes`.
+- **SLDB** — SnapLogic's built-in file store (referenced by `sldb:///` URIs). It's the storage layer behind project **Files**: a "File" asset is how SLDB-stored bytes appear in the project tree. `upload_sldb` / `download_sldb_file` operate on it via `org` + `project_path` + file name.
+- **Account** — an asset holding connection credentials (DB, S3, …) used by snaps. Contains secrets, so it's excluded from project export by default.
+
+---
+
+## 3. Workflow
+
+> ### ⚠️ How to pass files to platform MCP tools (READ FIRST)
 >
-> The platform MCP tools (`upload_sldb`, `import_pipeline`, `validate_pipeline`,
-> `execute_pipeline`) run **inside a Linux container**, not on your host machine.
-> They open file-path arguments (`local_file_path`, `slp_file_path`) **as the
-> container sees them** — so you must pass a path that is valid inside the container,
-> NOT a host path.
+> SnapCode uses the **cloud MCP (HTTP transport)** by default — the platform MCP
+> server runs **remotely**, so it **cannot see your local files**. Every tool that
+> takes a file does so by **content**, not by path. `Read` the file yourself, then
+> pass its contents:
 >
-> **Rule: for these tools' file-path arguments, pass a path RELATIVE to the repo
-> root** (e.g. `demo/csv_to_json.slp`, `libs/utils.expr`). The container's working
-> directory is the repo root, so relative paths resolve correctly in every mode
-> (Terminal + Docker on macOS/Windows, and the VS Code Dev Container).
+> **`import_pipeline` / `validate_pipeline` / `execute_pipeline`:** `Read` the `.slp`
+> and pass its JSON as `slp_content`. Do NOT pass a file path. (`slp_file_path` only
+> exists on the stdio/local-Docker transport; on the cloud MCP it isn't available, and
+> putting a path into `slp_content` fails with
+> `Failed to parse SLP content as JSON: Expecting value: line 1 column 1`.)
 >
-> **Do NOT pass host absolute paths to these tools.** A Windows host path like
-> `C:\Users\you\snapcode\demo\file.slp` does not exist inside the Linux container
-> and will fail with "File not found". (A macOS path like `/Users/you/...` also will
-> not match the container path.)
+> **`upload_sldb`:** `Read` the file and pass its contents as `file_content`. Do NOT
+> pass a file path. For text files (`.expr`, `.json`, `.csv`) use the default
+> `encoding='utf-8'`; for binary files, base64-encode the bytes and pass
+> `encoding='base64'`. (`local_file_path` only exists on the stdio transport.)
 >
-> This applies ONLY to the platform MCP tool arguments. Your own `Read`, `Write`,
-> and `Bash` calls (including `slpy translate`) still use normal host paths as usual.
+> Your own `Read`, `Write`, and `Bash` calls (including `slpy translate`) still use
+> normal host paths as usual.
 >
-> | Tool argument | Pass this | Not this |
-> |---|---|---|
-> | `slp_file_path` | `demo/pipeline.slp` | `C:\Users\you\snapcode\demo\pipeline.slp` |
-> | `local_file_path` | `libs/utils.expr` | `/Users/you/snapcode/libs/utils.expr` |
+> | Tool | Pass this |
+> |---|---|
+> | `import/validate/execute_pipeline` | `slp_content="<Read the .slp, pass its JSON>"` (NOT a path) |
+> | `upload_sldb` | `file_content="<Read the file, pass its contents>"` (+ `encoding`) (NOT a path) |
 
 Always follow these steps in order. Never skip a step.
 
@@ -68,37 +101,38 @@ Before importing the pipeline, scan the `.py` source for any files it references
 
 #### 2a — Expression libraries
 
-Scan for `ExpressionLibraries(expression_library=[...])` in the `.py`. For each `.expr` file found:
+Scan for `ExpressionLibraries(expression_library=[...])` in the `.py`. For each `.expr` file found, `Read` it and pass its contents:
 
 ```
-upload_sldb(org="{org}", sldb_path="{path}", sldb_file_name="{name}.expr", local_file_path="{repo_relative_path}/{name}.expr")
+upload_sldb(org="{org}", project_path="{path}", sldb_file_name="{name}.expr", file_content="<the .expr file's contents>")
 ```
 
-`local_file_path` is **relative to the repo root** (e.g. `libs/{name}.expr`) — see the file-path convention box above.
+`.expr` files are text, so the default `encoding='utf-8'` is correct — see the file-passing box above.
 
 #### 2b — Input data files
 
-Scan for `BinaryFileReader`, `FileReader`, or similar snaps with a `file_path` parameter pointing to a local file. For each file found, offer to upload it to SLDB:
+Scan for `BinaryFileReader`, `FileReader`, or similar snaps with a `file_path` parameter pointing to a local file. For each file found, offer to upload it to SLDB. `Read` the file and pass its contents:
 
 ```
-upload_sldb(org="{org}", sldb_path="{path}", sldb_file_name="{name}", local_file_path="{repo_relative_path}/{name}")
+upload_sldb(org="{org}", project_path="{path}", sldb_file_name="{name}", file_content="<the file's contents>")
 ```
 
-`local_file_path` is **relative to the repo root** (e.g. `data/{name}`) — see the file-path convention box above.
+Text files (`.json`, `.csv`, `.jsonl`) use the default `encoding='utf-8'`. For binary files, base64-encode the bytes and pass `encoding='base64'` — see the file-passing box above.
 
 If the user declines, note that the snap's file path will need to be set manually on the platform.
 
 ### Step 3 — Discover org, path, and snaplex
 
-Resolve where to deploy and which snaplex to use. In order of preference:
+Resolve **org**, **project_path**, and **snaplex** — three distinct things (see §2). In order of preference:
 
-1. Check saved user preferences — org, path, and snaplex may already be stored.
-2. Ask the user for the org if not known. Then call `list_snaplexes(org="{org}")` to discover available snaplexes. **Always pass the org explicitly** — calling without an org will return a 404.
-3. Ask the user for path and snaplex if still unclear.
+1. Check saved user preferences — `default_org`, `default_path`, and snaplex may already be stored.
+2. Determine the **org** (the tenant — not a project name; see §2). Then call `list_snaplexes(org="{org}")` to discover snaplexes. **Always pass the org explicitly** — omitting it, or passing a project name in its place, returns a 404.
+3. Determine the **project_path** (where the pipeline is stored) and the snaplex — ask the user if still unclear.
 
-**Default path:** `shared/`
-
-**Default snaplex for validation:** prefer `cloud-dev` (`snaplogic/rt/cloud/dev`) if available.
+> **org, project_path, and snaplex have no built-in defaults.** import/validate/execute require `org` + `project_path` (the platform addresses assets as `{org}/{project_path}/{name}`); validate/execute also require a snaplex (`snaplex_path`, a `runtime_path_id`). The tools fall back to `default_org` / `default_path` / `default_snaplex` **only** if `save_user_preferences` was called earlier **in the current session** — those defaults are in-memory, do NOT persist across MCP reconnects or Claude Code restarts, and are NOT inferred from a previous deploy. When they aren't set:
+> - **Ask the user to confirm the org — never guess it.**
+> - **Discover the snaplex** with `list_snaplexes(org="{org}")` and use its `runtime_path_id`; never invent one (a `runtime_path_id` is org-specific).
+> - Once resolved, offer to `save_user_preferences` so later steps in the same session can omit them.
 
 ### Step 4 — Confirm with user before deploying
 
@@ -127,11 +161,16 @@ If the user asks to change any field, update it and show the summary again befor
 
 ### Step 5 — Import (deploy)
 
+**`Read` the `.slp` file and pass its contents as `slp_content` — do NOT pass `slp_file_path`.** With the cloud MCP (HTTP transport) the server runs remotely and cannot see your local files, so it only accepts `slp_content` (raw JSON string). Passing a path into `slp_content` fails with `Failed to parse SLP content as JSON: Expecting value: line 1 column 1`.
+
+1. `Read` the `.slp` file into memory (a normal host path is fine for your own `Read`).
+2. Pass that JSON string as `slp_content`:
+
 ```
-import_pipeline(slp_file_path="{repo_relative_path}/{pipeline}.slp", org="{org}", project_path="{path}")
+import_pipeline(slp_content="<the .slp file's JSON contents>", org="{org}", project_path="{path}")
 ```
 
-Use a path **relative to the repo root** for `slp_file_path` (e.g. `demo/{pipeline}.slp`) — see the file-path convention box at the top of the workflow. Do not pass a host absolute path; the tool resolves it inside the container.
+> Note: `slp_file_path` only exists on the stdio (local-Docker) transport, not on the cloud MCP. `slp_content` works on both, so always use it.
 
 If import fails with "pipeline already exists", ask the user whether to overwrite, then re-run with `duplicate_check=False`.
 
@@ -177,7 +216,7 @@ If validation returns errors:
 2. **Fix the `.py` source** — always fix the SLPy source, never the `.slp` directly.
 3. **Re-translate** — run `slpy translate -strict` again (Step 1).
 4. **Re-upload supporting files if changed** (Step 2).
-5. **Re-import without confirmation** — use `duplicate_check=False` to overwrite in place. No need to ask again for fix iterations, the user already approved the target.
+5. **Re-import without confirmation** — `Read` the freshly re-translated `.slp` and pass it as `slp_content` with `duplicate_check=False` to overwrite in place. No need to ask again for fix iterations, the user already approved the target.
 6. **Re-validate** (Step 6).
 7. **Repeat** until validation passes with no errors.
 
@@ -190,13 +229,15 @@ After each iteration, report:
 
 ---
 
-## 3. Error Reference
+## 4. Error Reference
 
 ### Import errors
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `file not found` | Host path passed instead of a repo-relative path, or file not under the repo root | Pass a path relative to the repo root (e.g. `demo/x.slp`); the tool resolves it inside the container. The file must live under the repo directory so it's visible in the mount. |
+| `Failed to parse SLP content as JSON: Expecting value: line 1 column 1` | A file **path** was passed as `slp_content` (the cloud MCP has no `slp_file_path`) | `Read` the `.slp` and pass its JSON **contents** as `slp_content`, not a path |
+| `slp_content is required` / unexpected `slp_file_path` argument | Called `import/validate/execute_pipeline` with `slp_file_path` on the cloud MCP | `Read` the `.slp` and pass `slp_content` instead |
+| `file_content is required` / unexpected `local_file_path` argument (upload_sldb) | Called `upload_sldb` with `local_file_path` on the cloud MCP | `Read` the file and pass its contents as `file_content` (use `encoding='base64'` for binary) |
 | `permission denied` / `path does not exist` | Wrong org or path | Re-run `list_snaplexes` with explicit org |
 | `pipeline already exists` | Pipeline with same name exists at that path | Use `duplicate_check=False` to overwrite, or ask user to rename |
 
@@ -215,7 +256,7 @@ After each iteration, report:
 
 ---
 
-## 4. Reporting to the User
+## 5. Reporting to the User
 
 After completing the loop, always report:
 

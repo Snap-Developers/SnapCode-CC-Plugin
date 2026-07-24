@@ -1,7 +1,7 @@
 ---
 name: snaplogic-slpy-gen
 description: "Generate SnapLogic SLPy pipelines and expression libraries. Uses pygen MCP tools for snap discovery/validation, then compiles with slpy translate -strict via Bash."
-tools: Read, Write, Bash, TodoWrite, Glob, Grep, mcp__pygen__pygen_query_pipeline_examples, mcp__pygen__pygen_query_snap_examples, mcp__pygen__pygen_validate_snap_names, mcp__pygen__pygen_get_snap_parameters, mcp__pygen__pygen_get_snap_documentation, mcp__pygen__pygen_validate_connections, mcp__pygen__pygen_list_snaps_by_category, mcp__pygen__pygen_get_snap_io_info, mcp__pygen__pygen_get_all_snap_names
+tools: Read, Write, Bash, TodoWrite, Glob, Grep, mcp__snaplogic__pygen_query_pipeline_examples, mcp__snaplogic__pygen_query_snap_examples, mcp__snaplogic__pygen_validate_snap_names, mcp__snaplogic__pygen_get_snap_parameters, mcp__snaplogic__pygen_get_snap_documentation, mcp__snaplogic__pygen_validate_connections, mcp__snaplogic__pygen_list_snaps_by_category, mcp__snaplogic__pygen_get_snap_io_info, mcp__snaplogic__pygen_get_all_snap_names
 ---
 
 # SnapLogic SLPy Pipeline Generator
@@ -510,7 +510,7 @@ snap_names = [
 ]
 
 # 2. Validate with pygen
-validated = mcp__pygen__pygen_validate_snap_names(
+validated = mcp__snaplogic__pygen_validate_snap_names(
     snap_names=snap_names,
     do_get_parameters=True  # Get parameters in same call (efficient)
 )
@@ -546,7 +546,7 @@ p.connect([snap_0, snap_1, snap_2, snap_3, snap_4])
 """
 
 # 2. Validate skeleton with pygen
-result = mcp__pygen__pygen_validate_connections(skeleton_slpy=skeleton)
+result = mcp__snaplogic__pygen_validate_connections(skeleton_slpy=skeleton)
 
 # 3. Review results
 # - status: "valid" or "invalid"
@@ -581,12 +581,12 @@ result = mcp__pygen__pygen_validate_connections(skeleton_slpy=skeleton)
 # Connectivity snaps: APISuiteHTTPClient, SnowflakeBulkLoad
 
 # 2. Get documentation for connectivity snaps ONLY
-docs = mcp__pygen__pygen_get_snap_documentation(
+docs = mcp__snaplogic__pygen_get_snap_documentation(
     snap_names=["APISuiteHTTPClient", "SnowflakeBulkLoad"]
 )
 
 # 3. Get parameters for connectivity snaps ONLY
-params = mcp__pygen__pygen_get_snap_parameters(
+params = mcp__snaplogic__pygen_get_snap_parameters(
     snap_names=["APISuiteHTTPClient", "SnowflakeBulkLoad"]
 )
 ```
@@ -675,8 +675,8 @@ slpy translate -src {pipeline_name}.py -dest {pipeline_name}.slp -strict
 **Deferred documentation retrieval for transform/flow snaps:**
 If `slpy translate` fails with a snap configuration error on a transform or flow snap, fetch that snap's documentation and parameters reactively:
 ```python
-docs = mcp__pygen__pygen_get_snap_documentation(snap_names=["TransformMapper"])
-params = mcp__pygen__pygen_get_snap_parameters(snap_names=["TransformMapper"])
+docs = mcp__snaplogic__pygen_get_snap_documentation(snap_names=["TransformMapper"])
+params = mcp__snaplogic__pygen_get_snap_parameters(snap_names=["TransformMapper"])
 ```
 Then fix the configuration and re-run `slpy translate`.
 
