@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "snaplogic": {
+      "type": "http",
+      "url": "${SNAPLOGIC_BASE_URL}/api/1/rest/public/platform_mcp/mcp",
+      "headersHelper": "python ~/.claude/snapcode/mcp_headers.py 2>/dev/null || python3 ~/.claude/snapcode/mcp_headers.py"
+    }
+  }
+}

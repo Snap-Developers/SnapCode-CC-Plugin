@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""SnapCode `slpy` launcher (cross-platform).
+
+Lives in the plugin's bin/, which Claude Code adds to the Bash tool's PATH while the
+plugin is enabled — so a bare `slpy ...` from the agent resolves HERE, ahead of any
+older system slpy. This forwards to the real slpy that bootstrap.py installed into
+the plugin's persistent data dir (${CLAUDE_PLUGIN_DATA}/bin/slpy).
+
+If the real slpy isn't installed yet (bootstrap hasn't run / failed), it runs the
+bootstrap once, then forwards.
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", Path(__file__).resolve().parent.parent))
+PLUGIN_DATA = Path(os.environ.get("CLAUDE_PLUGIN_DATA", PLUGIN_ROOT / ".data"))
+
+REAL_SLPY = PLUGIN_DATA / "bin" / ("slpy.exe" if os.name == "nt" else "slpy")
+BOOTSTRAP = PLUGIN_ROOT / "bin" / "bootstrap.py"
+
+
+def main() -> int:
+    if not REAL_SLPY.exists():
+        # Not installed yet — run bootstrap once, then retry.
+        subprocess.run([sys.executable, str(BOOTSTRAP)], check=False)
+    if not REAL_SLPY.exists():
+        sys.stderr.write(
+            "[snapcode] slpy is not installed yet and bootstrap did not produce it.\n"
+            f"          expected: {REAL_SLPY}\n"
+        )
+        return 1
+    # Forward all args to the real slpy, replacing this process where possible.
+    if os.name == "nt":
+        return subprocess.call([str(REAL_SLPY), *sys.argv[1:]])
+    os.execv(str(REAL_SLPY), [str(REAL_SLPY), *sys.argv[1:]])
+    return 0  # unreachable on POSIX
+
+
+if __name__ == "__main__":
+    sys.exit(main())

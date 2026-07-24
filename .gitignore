@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Pro Code plugin: never commit the slpy wheel (private source) or runtime cache to this PUBLIC repo
+plugin/vendor/
+plugin/.data/
+*.whl
