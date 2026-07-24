@@ -22,13 +22,11 @@ path (~/.claude/snapcode/). The helper reads the user's SnapLogic credentials fr
 ENVIRONMENT; this script never handles credentials or reads a repo .env.
 
 Design notes:
-  - Invoked via hook EXEC form (command="python3", args=[this file]) so NO shell is
-    involved — this is the documented cross-platform pattern and avoids the
-    sh-vs-PowerShell problem (a shell-form "a || b" breaks on Windows PowerShell 5.1,
-    which lacks the || operator). If python3 is absent on a Windows host so the hook
-    doesn't fire, the slpy launcher (bin/slpy + slpy.cmd) re-runs this bootstrap via
-    sys.executable on the first `slpy` call, so setup still completes. All logic here
-    is Python.
+  - Invoked from the SessionStart hook as `python3 "${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.py"`.
+    The hook needs a `matcher` (e.g. "startup|resume|clear") or it registers but never fires.
+    All the real logic is Python (not shell), keeping it cross-platform. If python3 is absent
+    on a Windows host so the hook doesn't fire, the slpy launcher (bin/slpy + slpy.cmd) re-runs
+    this bootstrap via sys.executable on the first `slpy` call, so setup still completes.
   - slpy installs into ${CLAUDE_PLUGIN_DATA} (persists across sessions + plugin updates).
   - The broker token is passed to uv via ENV (UV_DEFAULT_INDEX), never on the command
     line, so it doesn't leak into shell history or process listings.
