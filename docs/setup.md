@@ -107,6 +107,12 @@ tools and the `slpy` CLI.
   different shell than the one running Claude Code. Re-check step 2 and restart.
 - **MCP shows a 404 / OAuth error** — usually means no `Authorization` header reached
   the server; confirm your credentials are exported in the current environment.
+- **Windows: MCP never connects, and `~/.claude/snapcode/` doesn't exist** — the
+  `SessionStart` hook runs the bootstrap that installs the MCP auth helper. It tries
+  `python3` first (macOS) and falls back to `python` (Windows). If you're on a very old
+  plugin version the hook only tried `python3` — on Windows that hits the Microsoft Store
+  alias stub ("Python was not found"), so the hook failed silently and the auth helper was
+  never installed. Update the plugin (`claude plugin update snapcode@snapcode`) and restart.
 - **`slpy` not found / not installed** — the bootstrap installs it on the first session;
   start a session once to initialize, then restart. If your pod is behind a proxy/firewall,
   the installer call must be able to reach the SLServer endpoint on your pod.

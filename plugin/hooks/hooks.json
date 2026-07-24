@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.py\" || python \"${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.py\"",
             "timeout": 60
           }
         ]
