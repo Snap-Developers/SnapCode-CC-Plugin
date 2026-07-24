@@ -10,7 +10,7 @@ slpy source:
   with the user's SnapLogic credentials (Basic auth). The endpoint returns a short-lived
   private-index URL ({"response_map": [{"index_url": ...}]}), and bootstrap installs slpy
   from the real sl-pypi. Users need no AWS/GitHub.
-  org_id is resolved from SNAPCODE_ORG_ID (direct hex ID) or SNAPCODE_ORG_NAME (bootstrap
+  org_id is resolved from SNAPLOGIC_ORG_ID (direct hex ID) or SNAPLOGIC_ORG_NAME (bootstrap
   looks it up via /api/1/rest/public/users/{email}).
 
 Update cadence: slpy publishes very frequently, so we DON'T check every session. We check
@@ -55,12 +55,12 @@ LAST_CHECK = PLUGIN_DATA / "last_check"  # timestamp of last broker/index check
 # base_url = the user's pod (same host as the MCP endpoint), from the user's environment.
 SNAPLOGIC_BASE_URL = os.environ.get("SNAPLOGIC_BASE_URL", "").rstrip("/")
 # Org ID for the fetch_installer URL path. Two ways to provide it (ID takes priority):
-#   SNAPCODE_ORG_ID  — the 24-char hex org ID directly (e.g. from Manager > Settings)
-#   SNAPCODE_ORG_NAME — the org name (e.g. "mycompany"); bootstrap resolves it to an ID
+#   SNAPLOGIC_ORG_ID  — the 24-char hex org ID directly (e.g. from Manager > Settings)
+#   SNAPLOGIC_ORG_NAME — the org name (e.g. "mycompany"); bootstrap resolves it to an ID
 #                       via GET /api/1/rest/public/users/{email} on first run.
 # If neither is set, bootstrap logs a hint and skips slpy installation.
-SNAPCODE_ORG_ID = os.environ.get("SNAPCODE_ORG_ID", "")
-SNAPCODE_ORG_NAME = os.environ.get("SNAPCODE_ORG_NAME", "")
+SNAPLOGIC_ORG_ID = os.environ.get("SNAPLOGIC_ORG_ID", "")
+SNAPLOGIC_ORG_NAME = os.environ.get("SNAPLOGIC_ORG_NAME", "")
 # How often to check the index for a newer slpy (seconds). slpy publishes often, so a
 # daily check keeps users current without a broker call every session.
 CHECK_TTL = int(os.environ.get("SNAPCODE_CHECK_TTL", str(24 * 3600)))
@@ -138,22 +138,22 @@ def _request_headers(user: str, pw: str) -> dict:
 
 
 def resolve_org_id(user: str, pw: str) -> Optional[str]:
-    """Resolve org ID from SNAPCODE_ORG_ID (direct) or SNAPCODE_ORG_NAME (lookup).
+    """Resolve org ID from SNAPLOGIC_ORG_ID (direct) or SNAPLOGIC_ORG_NAME (lookup).
 
     Priority:
-      1. SNAPCODE_ORG_ID — used as-is (no network call needed)
-      2. SNAPCODE_ORG_NAME — resolved via GET /api/1/rest/public/users/{email},
+      1. SNAPLOGIC_ORG_ID — used as-is (no network call needed)
+      2. SNAPLOGIC_ORG_NAME — resolved via GET /api/1/rest/public/users/{email},
          which returns the user's org list with IDs. No admin required.
 
     Returns the org ID string, or None if it can't be determined.
     """
     import urllib.parse
 
-    if SNAPCODE_ORG_ID:
-        return SNAPCODE_ORG_ID
+    if SNAPLOGIC_ORG_ID:
+        return SNAPLOGIC_ORG_ID
 
-    if not SNAPCODE_ORG_NAME:
-        log("Neither SNAPCODE_ORG_ID nor SNAPCODE_ORG_NAME is set. "
+    if not SNAPLOGIC_ORG_NAME:
+        log("Neither SNAPLOGIC_ORG_ID nor SNAPLOGIC_ORG_NAME is set. "
             "Set one of them to install slpy. See SnapCode setup docs.")
         return None
 
@@ -164,18 +164,18 @@ def resolve_org_id(user: str, pw: str) -> Optional[str]:
         with urllib.request.urlopen(req, timeout=10) as r:
             orgs = json.load(r).get("organizations", [])
     except Exception as e:
-        log(f"org lookup failed ({url}): {e} — set SNAPCODE_ORG_ID directly to skip lookup.")
+        log(f"org lookup failed ({url}): {e} — set SNAPLOGIC_ORG_ID directly to skip lookup.")
         return None
 
-    matches = [o for o in orgs if o.get("name", "").lower() == SNAPCODE_ORG_NAME.lower()]
+    matches = [o for o in orgs if o.get("name", "").lower() == SNAPLOGIC_ORG_NAME.lower()]
     if not matches:
         names = [o.get("name") for o in orgs]
-        log(f"org '{SNAPCODE_ORG_NAME}' not found. Available: {names}. "
-            "Check SNAPCODE_ORG_NAME or use SNAPCODE_ORG_ID directly.")
+        log(f"org '{SNAPLOGIC_ORG_NAME}' not found. Available: {names}. "
+            "Check SNAPLOGIC_ORG_NAME or use SNAPLOGIC_ORG_ID directly.")
         return None
 
     org_id = matches[0]["id"]
-    log(f"resolved org '{SNAPCODE_ORG_NAME}' → {org_id}")
+    log(f"resolved org '{SNAPLOGIC_ORG_NAME}' → {org_id}")
     return org_id
 
 
@@ -186,7 +186,7 @@ def fetch_index_url() -> Optional[str]:
     SnapLogic credentials (Basic auth). The endpoint verifies the caller and returns
     {"response_map": [{"index_url": "<token-embedded private index URL>", "expires_in": N}]}.
 
-    Org ID is resolved from SNAPCODE_ORG_ID (direct) or SNAPCODE_ORG_NAME (lookup).
+    Org ID is resolved from SNAPLOGIC_ORG_ID (direct) or SNAPLOGIC_ORG_NAME (lookup).
     Returns the index URL, or None if anything required is missing or the call fails.
     """
     user = os.environ.get("SNAPLOGIC_API_USER")

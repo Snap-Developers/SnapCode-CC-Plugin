@@ -23,32 +23,32 @@ credentials** — set them in your own shell environment. These are SnapLogic pl
 credentials, **not** GitHub or AWS.
 
 Set your SnapLogic credentials, pod URL, and org. **Most users should use
-`SNAPCODE_ORG_NAME`** (just your org's name) — the plugin resolves the ID for you.
+`SNAPLOGIC_ORG_NAME`** (just your org's name) — the plugin resolves the ID for you.
 
 ```bash
 # macOS / Linux (add to ~/.zshrc or ~/.bashrc to persist)
 export SNAPLOGIC_API_USER="you@yourcompany.com"
 export SNAPLOGIC_API_PASS="your-password"
 export SNAPLOGIC_BASE_URL="https://your-pod.snaplogic.com"
-export SNAPCODE_ORG_NAME="your-org-name"        # e.g. "mycompany" — the org you work in
+export SNAPLOGIC_ORG_NAME="your-org-name"        # e.g. "mycompany" — the org you work in
 # Advanced: skip the lookup by giving the exact ID instead (takes priority if both set):
-# export SNAPCODE_ORG_ID="your-24-char-org-id"
+# export SNAPLOGIC_ORG_ID="your-24-char-org-id"
 ```
 ```powershell
 # Windows PowerShell (use [Environment]::SetEnvironmentVariable to persist)
 $env:SNAPLOGIC_API_USER = "you@yourcompany.com"
 $env:SNAPLOGIC_API_PASS = "your-password"
 $env:SNAPLOGIC_BASE_URL = "https://your-pod.snaplogic.com"
-$env:SNAPCODE_ORG_NAME  = "your-org-name"
-# Advanced: $env:SNAPCODE_ORG_ID = "your-24-char-org-id"
+$env:SNAPLOGIC_ORG_NAME  = "your-org-name"
+# Advanced: $env:SNAPLOGIC_ORG_ID = "your-24-char-org-id"
 ```
 
 | Variable | What it is |
 |---|---|
 | `SNAPLOGIC_API_USER` / `_PASS` | Your SnapLogic platform login (email + password). **Not** GitHub/AWS. |
 | `SNAPLOGIC_BASE_URL` | Your pod URL — the same host you use for the SnapLogic UI / MCP endpoint. |
-| `SNAPCODE_ORG_NAME` | **Recommended.** Your org name (e.g. `mycompany`) — the name you see in the SnapLogic UI. The plugin resolves the ID automatically. |
-| `SNAPCODE_ORG_ID` | Advanced/optional. The exact 24-char hex org ID. Only visible in Manager Settings to org admins, so most users should use `SNAPCODE_ORG_NAME` instead. |
+| `SNAPLOGIC_ORG_NAME` | **Recommended.** Your org name (e.g. `mycompany`) — the name you see in the SnapLogic UI. The plugin resolves the ID automatically. |
+| `SNAPLOGIC_ORG_ID` | Advanced/optional. The exact 24-char hex org ID. Only visible in Manager Settings to org admins, so most users should use `SNAPLOGIC_ORG_NAME` instead. |
 
 > Set these **before** starting Claude Code, in the same shell. `SNAPLOGIC_API_USER/PASS`
 > also authenticate the cloud MCP. If you change any, restart Claude Code.
@@ -78,6 +78,19 @@ After the first init, on every session the plugin:
 - loads the SnapCode skills,
 - connects to the SnapLogic cloud MCP using your credentials from step 2,
 - has the `slpy` CLI ready.
+
+### Updating
+
+The plugin is a snapshot cloned locally — it does **not** auto-update. To pull the
+latest (new skills, fixes):
+
+```bash
+claude plugin marketplace update snapcode     # fetch the latest from the repo
+claude plugin update snapcode@snapcode         # apply it
+```
+
+> The `slpy` CLI is separate: the plugin refreshes it on its own (a daily check against
+> the private index), so you don't need to update it by hand.
 
 ## 4. Verify
 

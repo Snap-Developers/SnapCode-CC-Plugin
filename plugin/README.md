@@ -30,14 +30,14 @@ On session start the `SessionStart` hook runs `bootstrap.py`, which:
 To keep it fast, bootstrap checks the index at most once per TTL window (default 24h); between
 checks an already-installed slpy is reused with no network call.
 
-`org_id` is resolved from `SNAPCODE_ORG_ID` (direct) or `SNAPCODE_ORG_NAME` (looked up via
+`org_id` is resolved from `SNAPLOGIC_ORG_ID` (direct) or `SNAPLOGIC_ORG_NAME` (looked up via
 `/api/1/rest/public/users/{email}`). Requests send an identifying `User-Agent` so pods behind
 Cloudflare bot protection don't reject them (1010).
 
 ## Try it locally
 
 ```bash
-# set SNAPLOGIC_API_USER / _PASS / _BASE_URL and SNAPCODE_ORG_ID (or _NAME) first
+# set SNAPLOGIC_API_USER / _PASS / _BASE_URL and SNAPLOGIC_ORG_ID (or _NAME) first
 claude --plugin-dir ./plugin
 ```
 

@@ -13,7 +13,7 @@ See **[docs/setup.md](docs/setup.md)** for the full guide. In short:
    export SNAPLOGIC_API_USER="you@yourcompany.com"
    export SNAPLOGIC_API_PASS="your-password"
    export SNAPLOGIC_BASE_URL="https://your-pod.snaplogic.com"
-   export SNAPCODE_ORG_NAME="your-org-name"   # or SNAPCODE_ORG_ID="<24-char hex>"
+   export SNAPLOGIC_ORG_NAME="your-org-name"   # or SNAPLOGIC_ORG_ID="<24-char hex>"
    ```
 3. **Install the plugin:**
    ```bash
