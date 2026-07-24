@@ -1,59 +1,47 @@
-#!/usr/bin/env python3
-"""SnapCode `slpy` launcher (cross-platform).
+#!/bin/sh
+# SnapCode `slpy` launcher — POSIX sh (works in macOS/Linux shells and Windows git-bash,
+# which is what Claude Code's Bash tool uses on every platform).
+#
+# Why sh and not Python: this file only needs to FORWARD to the real slpy. Writing it in
+# Python meant relying on a `python3` shebang, which on Windows resolves to the Microsoft
+# Store alias stub (real Python is `python`) — so the launcher couldn't even start. sh has
+# no such problem, and forwarding needs no interpreter.
+#
+# It forwards to the slpy that bootstrap.py installed into the plugin's persistent data
+# dir. If slpy isn't there yet (first run / bootstrap hasn't finished), it runs bootstrap
+# once (python || python3, to cover both platforms) and then forwards.
 
-Lives in the plugin's bin/, which Claude Code adds to the Bash tool's PATH while the
-plugin is enabled — so a bare `slpy ...` from the agent resolves HERE, ahead of any
-older system slpy. This forwards to the real slpy that bootstrap.py installed into
-the plugin's persistent data dir (${CLAUDE_PLUGIN_DATA}/bin/slpy).
+# Resolve the plugin data dir the SAME way bootstrap.py does, or the launcher would look
+# for slpy somewhere bootstrap didn't install it → endless re-install. Claude Code sets
+# CLAUDE_PLUGIN_DATA for the hook but NOT for this launcher, so fall back to the stable
+# per-plugin data path (matching bootstrap), not a version-specific dir.
+if [ -n "$CLAUDE_PLUGIN_DATA" ]; then
+    DATA_DIR="$CLAUDE_PLUGIN_DATA"
+elif [ -d "$HOME/.claude/plugins/data" ]; then
+    DATA_DIR="$HOME/.claude/plugins/data/snapcode-snapcode"
+else
+    # last resort (e.g. --plugin-dir dev): plugin_root/.data
+    SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    DATA_DIR="$(dirname -- "$SCRIPT_DIR")/.data"
+fi
 
-If the real slpy isn't installed yet (bootstrap hasn't run / failed), it runs the
-bootstrap once, then forwards.
-"""
+REAL_SLPY="$DATA_DIR/bin/slpy"
+[ -f "$REAL_SLPY.exe" ] && REAL_SLPY="$REAL_SLPY.exe"   # Windows
 
-import os
-import subprocess
-import sys
-from pathlib import Path
+# Bootstrap once if slpy isn't installed yet.
+if [ ! -f "$REAL_SLPY" ]; then
+    SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    BOOTSTRAP="$SCRIPT_DIR/bootstrap.py"
+    python "$BOOTSTRAP" 2>/dev/null || python3 "$BOOTSTRAP"
+    # re-resolve (bootstrap may have produced slpy or slpy.exe)
+    REAL_SLPY="$DATA_DIR/bin/slpy"
+    [ -f "$REAL_SLPY.exe" ] && REAL_SLPY="$REAL_SLPY.exe"
+fi
 
-PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", Path(__file__).resolve().parent.parent))
+if [ ! -f "$REAL_SLPY" ]; then
+    echo "[snapcode] slpy is not installed yet and bootstrap did not produce it." >&2
+    echo "          expected: $REAL_SLPY" >&2
+    exit 1
+fi
 
-
-def _plugin_data_dir() -> Path:
-    """Must match bootstrap.py's resolution exactly, or the launcher looks for slpy in a
-    different dir than bootstrap installed it → endless re-install. Claude Code sets
-    CLAUDE_PLUGIN_DATA for the hook but NOT for this launcher (invoked via the Bash tool),
-    so fall back to the stable per-plugin data path, not the version-specific .data."""
-    env = os.environ.get("CLAUDE_PLUGIN_DATA")
-    if env:
-        return Path(env)
-    stable = Path.home() / ".claude" / "plugins" / "data" / "snapcode-snapcode"
-    if stable.parent.exists():
-        return stable
-    return PLUGIN_ROOT / ".data"
-
-
-PLUGIN_DATA = _plugin_data_dir()
-
-REAL_SLPY = PLUGIN_DATA / "bin" / ("slpy.exe" if os.name == "nt" else "slpy")
-BOOTSTRAP = PLUGIN_ROOT / "bin" / "bootstrap.py"
-
-
-def main() -> int:
-    if not REAL_SLPY.exists():
-        # Not installed yet — run bootstrap once, then retry.
-        subprocess.run([sys.executable, str(BOOTSTRAP)], check=False)
-    if not REAL_SLPY.exists():
-        sys.stderr.write(
-            "[snapcode] slpy is not installed yet and bootstrap did not produce it.\n"
-            f"          expected: {REAL_SLPY}\n"
-        )
-        return 1
-    # Forward all args to the real slpy, replacing this process where possible.
-    if os.name == "nt":
-        return subprocess.call([str(REAL_SLPY), *sys.argv[1:]])
-    os.execv(str(REAL_SLPY), [str(REAL_SLPY), *sys.argv[1:]])
-    return 0  # unreachable on POSIX
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+exec "$REAL_SLPY" "$@"

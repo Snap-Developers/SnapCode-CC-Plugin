@@ -3,7 +3,7 @@
     "snaplogic": {
       "type": "http",
       "url": "${SNAPLOGIC_BASE_URL}/api/1/rest/public/platform_mcp/mcp",
-      "headersHelper": "python \"${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py\" 2>/dev/null || python3 \"${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py\""
+      "headersHelper": "python bin/mcp_headers.py 2>/dev/null || python3 bin/mcp_headers.py"
     }
   }
 }
