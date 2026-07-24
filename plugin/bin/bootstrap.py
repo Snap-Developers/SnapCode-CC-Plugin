@@ -65,10 +65,9 @@ SNAPLOGIC_ORG_NAME = os.environ.get("SNAPLOGIC_ORG_NAME", "")
 # daily check keeps users current without a broker call every session.
 CHECK_TTL = int(os.environ.get("SNAPCODE_CHECK_TTL", str(24 * 3600)))
 
-# Fixed install location for the MCP auth helper (headersHelper can't see the plugin dir).
-AUTH_DIR = Path.home() / ".claude" / "snapcode"
-HELPER_SRC = PLUGIN_ROOT / "bin" / "mcp_headers.py"
-HELPER_DST = AUTH_DIR / "mcp_headers.py"
+# Note: the MCP auth helper (bin/mcp_headers.py) is referenced directly from .mcp.json
+# via ${CLAUDE_PLUGIN_ROOT}, so bootstrap no longer copies it anywhere — that removes the
+# first-session race where the MCP tried to connect before the helper was in place.
 
 SLPY_EXE = BIN_DIR / ("slpy.exe" if os.name == "nt" else "slpy")
 
@@ -236,24 +235,10 @@ def install_slpy_from_index(uv: str, index_url: str) -> bool:
     return True
 
 
-# ── auth helper ─────────────────────────────────────────────────────────────--
-def install_auth_helper() -> None:
-    """Place the MCP auth helper at its fixed path (it reads creds from the env at runtime)."""
-    try:
-        AUTH_DIR.mkdir(parents=True, exist_ok=True)
-        if HELPER_SRC.exists():
-            shutil.copy2(HELPER_SRC, HELPER_DST)
-            log(f"auth helper ready at {HELPER_DST}")
-        else:
-            log(f"auth helper source missing: {HELPER_SRC}")
-    except Exception as e:
-        log(f"auth helper setup skipped: {e}")
-
-
 # ── main ───────────────────────────────────────────────────────────────────--
 def main() -> int:
-    install_auth_helper()  # independent of slpy — MCP must work even if slpy isn't installed
-
+    # MCP auth no longer needs setup here — .mcp.json points headersHelper straight at
+    # ${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py, which exists at install time.
     if not check_due():
         log(f"slpy present and checked within {CHECK_TTL // 3600}h — skipping")
         return 0
