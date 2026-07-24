@@ -125,9 +125,18 @@ def mark_checked() -> None:
 
 
 # ── installer endpoint (SLServer) ─────────────────────────────────────────────
-def _make_auth_header(user: str, pw: str) -> str:
+# Identify the SnapCode plugin as a real client. Some pods (e.g. canary) sit behind
+# Cloudflare bot protection that rejects the default Python-urllib User-Agent with a
+# 1010 error; a proper UA identifies our legitimate client (like gh/aws CLIs do).
+USER_AGENT = "snapcode-plugin-bootstrap/0.1 (+https://github.com/Snap-Developers/SnapCode-CC-Plugin)"
+
+
+def _request_headers(user: str, pw: str) -> dict:
     import base64
-    return "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
+    return {
+        "Authorization": "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode(),
+        "User-Agent": USER_AGENT,
+    }
 
 
 def resolve_org_id(user: str, pw: str) -> Optional[str]:
@@ -152,7 +161,7 @@ def resolve_org_id(user: str, pw: str) -> Optional[str]:
 
     # Look up org ID from org name via the platform user API.
     url = f"{SNAPLOGIC_BASE_URL}/api/1/rest/public/users/{urllib.parse.quote(user, safe='')}"
-    req = urllib.request.Request(url, headers={"Authorization": _make_auth_header(user, pw)})
+    req = urllib.request.Request(url, headers=_request_headers(user, pw))
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             orgs = json.load(r).get("organizations", [])
@@ -196,8 +205,7 @@ def fetch_index_url() -> Optional[str]:
         return None
 
     url = f"{SNAPLOGIC_BASE_URL}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer"
-    req = urllib.request.Request(url, method="GET",
-                                 headers={"Authorization": _make_auth_header(user, pw)})
+    req = urllib.request.Request(url, method="GET", headers=_request_headers(user, pw))
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             body = json.load(r)
