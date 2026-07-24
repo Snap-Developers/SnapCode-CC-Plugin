@@ -76,6 +76,47 @@ def log(msg: str) -> None:
     print(f"[snapcode-bootstrap] {msg}", file=sys.stderr)
 
 
+# One-time welcome flag (shown only on the very first session after install).
+WELCOME_FLAG = PLUGIN_DATA / ".welcomed"
+
+WELCOME_TEXT = (
+    "👋 SnapCode is set up. This plugin gives you:\n"
+    "  • Skills — snaplogic-slpy-gen (generate pipelines) and snaplogic-deploy (deploy/validate)\n"
+    "  • Cloud MCP `snaplogic` — snap discovery + platform tools, no local server\n"
+    "  • The `slpy` CLI — auto-installed, for translate/validate/execute\n"
+    "Tip: for best results use an Opus/Sonnet model — switch with /model."
+)
+
+
+def emit_to_user(system_message: str = "", model_context: str = "") -> None:
+    """Emit a SessionStart hook JSON result. `systemMessage` is shown to the USER;
+    `additionalContext` is injected for the model. Printed to stdout (SessionStart
+    reads stdout); no-op if both are empty."""
+    if not system_message and not model_context:
+        return
+    out = {}
+    if system_message:
+        out["systemMessage"] = system_message
+    if model_context:
+        out["hookSpecificOutput"] = {
+            "hookEventName": "SessionStart",
+            "additionalContext": model_context,
+        }
+    print(json.dumps(out))
+
+
+def first_time() -> bool:
+    """True the first time ever (welcome not yet shown). Marks it shown."""
+    if WELCOME_FLAG.exists():
+        return False
+    try:
+        PLUGIN_DATA.mkdir(parents=True, exist_ok=True)
+        WELCOME_FLAG.write_text("shown\n")
+    except Exception:
+        pass
+    return True
+
+
 # ── uv ────────────────────────────────────────────────────────────────────────
 def ensure_uv() -> Optional[str]:
     """Return path to uv, installing it if missing. Cross-platform."""
@@ -239,24 +280,41 @@ def install_slpy_from_index(uv: str, index_url: str) -> bool:
 def main() -> int:
     # MCP auth no longer needs setup here — .mcp.json points headersHelper straight at
     # ${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py, which exists at install time.
+    #
+    # We collect a single user-facing message and emit it once at the end (a hook can
+    # only emit one JSON result). Two independent parts:
+    #   - welcome: shown ONLY the first session ever (WELCOME_FLAG)
+    #   - install note: shown ONLY when we actually (re)install slpy this run
+    welcome = WELCOME_TEXT if first_time() else ""
+
+    # slpy already present + checked within TTL → stay quiet (no install note).
     if not check_due():
         log(f"slpy present and checked within {CHECK_TTL // 3600}h — skipping")
+        emit_to_user(welcome)
         return 0
 
     uv = ensure_uv()
     if not uv:
         log("uv unavailable; cannot install slpy. Install uv and restart the session.")
+        emit_to_user(welcome, "SnapCode: `uv` is not installed, so the slpy CLI can't be "
+                              "set up. Install uv and restart the session.")
         return 0
 
     # Install/update slpy from the private index via the SLServer installer endpoint.
+    # This can take ~20s on first run (downloads the toolchain), so tell the user.
     index_url = fetch_index_url()
     if index_url and install_slpy_from_index(uv, index_url):
         mark_checked()
         log(f"done. slpy ready at {SLPY_EXE}")
+        note = "⏳ SnapCode: first-time setup done — the slpy CLI is installed and ready."
+        emit_to_user((welcome + "\n\n" + note).strip() if welcome else note)
         return 0
 
     log("slpy not installed: installer endpoint unreachable or credentials missing. "
         "Check SNAPLOGIC_BASE_URL and your SnapLogic credentials (see setup docs).")
+    emit_to_user(welcome, "SnapCode: could not install the slpy CLI (installer endpoint "
+                          "unreachable or SnapLogic credentials missing). Check "
+                          "SNAPLOGIC_BASE_URL + credentials; see the setup docs.")
     return 0
 
 
