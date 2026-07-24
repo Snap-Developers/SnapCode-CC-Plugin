@@ -106,6 +106,39 @@ In a Claude Code session:
 Then ask Claude to list snaps or generate a pipeline — it should use the cloud MCP
 tools and the `slpy` CLI.
 
+## 5. Uninstall
+
+```bash
+claude plugin uninstall snapcode@snapcode
+claude plugin marketplace remove snapcode
+```
+
+Those two commands remove the plugin and the marketplace entry. To also clear the bits
+the plugin wrote outside its own directory (safe to delete — regenerated on reinstall):
+
+```bash
+rm -rf ~/.claude/snapcode                       # MCP auth helper
+rm -rf ~/.claude/plugins/cache/snapcode         # installed slpy (large)
+```
+
+If you set the `SNAPLOGIC_*` env vars in your shell profile (step 2) and no longer want
+them, remove those lines from `~/.zshrc` / `~/.bashrc` too.
+
+## Migrating from the old install (clone + Docker)
+
+If you previously used the old SnapCode distribution (cloned the repo, ran the Docker
+image, installed slpy/MCP globally), remove those first — they **conflict** with the
+plugin:
+
+```bash
+claude mcp remove snaplogic     # old user-scope MCP clashes with the plugin's (same name)
+rm ~/.local/bin/slpy            # old slpy symlink shadows the plugin's on PATH
+```
+
+Symptoms if you skip this: the plugin's `snapcode:snaplogic` MCP shows **failed** (the old
+`snaplogic` MCP wins the name), and `which slpy` still points at the old dev symlink instead
+of the plugin's. After removing both, install the plugin per step 3.
+
 ## Troubleshooting
 
 - **Already used the old SnapCode repo? Remove the old `snaplogic` MCP first.** If you
