@@ -44,7 +44,28 @@ from pathlib import Path
 from typing import Optional
 
 PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", Path(__file__).resolve().parent.parent))
-PLUGIN_DATA = Path(os.environ.get("CLAUDE_PLUGIN_DATA", PLUGIN_ROOT / ".data"))
+
+
+def _plugin_data_dir() -> Path:
+    """Resolve the plugin's persistent data dir consistently across processes.
+
+    Claude Code sets CLAUDE_PLUGIN_DATA when it runs the SessionStart hook, but NOT
+    when the slpy launcher is invoked via the Bash tool — so if we fell back to
+    PLUGIN_ROOT/.data (version-specific), the hook and the launcher would install/look
+    for slpy in DIFFERENT dirs and re-install endlessly. Fall back to Claude Code's
+    stable per-plugin data path (~/.claude/plugins/data/<plugin>-<marketplace>) so both
+    processes agree. Both plugin and marketplace are named "snapcode" here.
+    """
+    env = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if env:
+        return Path(env)
+    stable = Path.home() / ".claude" / "plugins" / "data" / "snapcode-snapcode"
+    if stable.parent.exists():  # normal installed layout
+        return stable
+    return PLUGIN_ROOT / ".data"  # last resort (e.g. --plugin-dir dev with no data dir)
+
+
+PLUGIN_DATA = _plugin_data_dir()
 
 TOOL_DIR = PLUGIN_DATA / "tools"        # where uv installs slpy
 BIN_DIR = PLUGIN_DATA / "bin"           # where the slpy executable lands

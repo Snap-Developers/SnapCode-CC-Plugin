@@ -16,7 +16,23 @@ import sys
 from pathlib import Path
 
 PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", Path(__file__).resolve().parent.parent))
-PLUGIN_DATA = Path(os.environ.get("CLAUDE_PLUGIN_DATA", PLUGIN_ROOT / ".data"))
+
+
+def _plugin_data_dir() -> Path:
+    """Must match bootstrap.py's resolution exactly, or the launcher looks for slpy in a
+    different dir than bootstrap installed it → endless re-install. Claude Code sets
+    CLAUDE_PLUGIN_DATA for the hook but NOT for this launcher (invoked via the Bash tool),
+    so fall back to the stable per-plugin data path, not the version-specific .data."""
+    env = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if env:
+        return Path(env)
+    stable = Path.home() / ".claude" / "plugins" / "data" / "snapcode-snapcode"
+    if stable.parent.exists():
+        return stable
+    return PLUGIN_ROOT / ".data"
+
+
+PLUGIN_DATA = _plugin_data_dir()
 
 REAL_SLPY = PLUGIN_DATA / "bin" / ("slpy.exe" if os.name == "nt" else "slpy")
 BOOTSTRAP = PLUGIN_ROOT / "bin" / "bootstrap.py"
