@@ -177,11 +177,20 @@ of the plugin's. After removing both, install the plugin per step 3.
 - **MCP shows a 404 / OAuth error** — means no `Authorization` header reached the server,
   so it fell back to OAuth discovery (which 404s on this endpoint). The header comes from
   the auth helper (`bin/mcp_headers.py`), run via the `.mcp.json` `headersHelper`. Confirm
-  your credentials are exported in the current environment. On **Windows**, also make sure
-  you're on a recent plugin version: older versions used `2>/dev/null` in the headersHelper
-  command, which fails under cmd/PowerShell (they treat `/dev/null` as a path), so the
-  helper returned nothing and the MCP couldn't authenticate. Update the plugin
-  (`claude plugin update snapcode@snapcode`) and restart.
+  your credentials are exported in the current environment. To check directly, run the
+  helper by hand in the same shell — if it prints `{"Authorization": "Basic ..."}` your
+  creds are being read; if it prints just `{}`, `SNAPLOGIC_API_USER`/`SNAPLOGIC_API_PASS`
+  aren't set in this shell. The helper lives under the installed plugin:
+
+  ```bash
+  # macOS / Linux / Git-Bash (use python on Windows):
+  python3 ~/.claude/plugins/cache/snapcode/*/*/bin/mcp_headers.py
+  ```
+
+  On **Windows**, also make sure you're on a recent plugin version: older versions used
+  `2>/dev/null` in the headersHelper command, which fails under cmd/PowerShell (they treat
+  `/dev/null` as a path), so the helper returned nothing and the MCP couldn't authenticate.
+  Update the plugin (`claude plugin update snapcode@snapcode`) and restart.
 - **Installer unreachable / org lookup fails / "credentials missing"** — first check the
   variable **names**: the org var must be `SNAPLOGIC_ORG_NAME` (or `SNAPLOGIC_ORG_ID`), not
   `SNAPCODE_ORG_NAME`. A misspelled name is silently ignored, so the bootstrap can't resolve
