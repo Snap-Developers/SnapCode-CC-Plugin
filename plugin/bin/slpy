@@ -1,59 +1,94 @@
-#!/usr/bin/env python3
-"""SnapCode `slpy` launcher (cross-platform).
+#!/bin/sh
+# SnapCode `slpy` launcher (cross-platform, POSIX sh).
+#
+# Lives in the plugin's bin/, which Claude Code adds to the Bash tool's PATH while the
+# plugin is enabled — so a bare `slpy ...` from the agent resolves HERE, ahead of any
+# older system slpy. This forwards to the real slpy that bootstrap.py installed into
+# the plugin's persistent data dir (${CLAUDE_PLUGIN_DATA}/bin/slpy).
+#
+# Why sh and not `#!/usr/bin/env python3`:
+#   The Bash tool runs this via its shebang. A `python3` shebang is fatal on Windows,
+#   where the Git-Bash PATH resolves `python3` to the Microsoft Store alias stub
+#   ("Python was not found") rather than the real interpreter — the launcher dies before
+#   its first line runs. And no single interpreter name is safe everywhere: Windows
+#   ships only `python.exe` (no `python3`), while modern macOS ships only `python3`
+#   (no `python`). /bin/sh exists on macOS, Linux, and Git-Bash, so we make the shell
+#   the entrypoint and DISCOVER a usable Python at runtime instead of hard-coding a name.
+#
+# If the real slpy isn't installed yet (bootstrap hasn't run / failed), it runs the
+# bootstrap once (via the discovered Python), then forwards.
 
-Lives in the plugin's bin/, which Claude Code adds to the Bash tool's PATH while the
-plugin is enabled — so a bare `slpy ...` from the agent resolves HERE, ahead of any
-older system slpy. This forwards to the real slpy that bootstrap.py installed into
-the plugin's persistent data dir (${CLAUDE_PLUGIN_DATA}/bin/slpy).
+set -u
 
-If the real slpy isn't installed yet (bootstrap hasn't run / failed), it runs the
-bootstrap once, then forwards.
-"""
+# --- PLUGIN_ROOT: CLAUDE_PLUGIN_ROOT if set, else this script's parent-of-bin dir ---
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT"
+else
+  PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+fi
 
-import os
-import subprocess
-import sys
-from pathlib import Path
+# --- PLUGIN_DATA: must match bootstrap.py's _plugin_data_dir() EXACTLY, or the launcher
+# looks for slpy in a different dir than bootstrap installed it → endless re-install.
+# 1) CLAUDE_PLUGIN_DATA if set (Claude Code sets it for the hook, not for this launcher)
+# 2) the stable per-plugin data path, if its parent exists
+# 3) PLUGIN_ROOT/.data as a last resort
+if [ -n "${CLAUDE_PLUGIN_DATA:-}" ]; then
+  PLUGIN_DATA="$CLAUDE_PLUGIN_DATA"
+else
+  # HOME is set on macOS/Linux and by Git-Bash on Windows; fall back to USERPROFILE.
+  _home="${HOME:-${USERPROFILE:-}}"
+  _stable="$_home/.claude/plugins/data/snapcode-snapcode"
+  if [ -d "$_home/.claude/plugins/data" ]; then
+    PLUGIN_DATA="$_stable"
+  else
+    PLUGIN_DATA="$PLUGIN_ROOT/.data"
+  fi
+fi
 
-PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", Path(__file__).resolve().parent.parent))
+# --- Locate the real slpy. It's slpy.exe on Windows (bootstrap/uv produce a .exe even
+# under Git-Bash) and plain slpy on macOS/Linux. Check both so one launcher works on all. ---
+REAL_SLPY=""
+for _cand in "$PLUGIN_DATA/bin/slpy" "$PLUGIN_DATA/bin/slpy.exe"; do
+  if [ -x "$_cand" ] || [ -f "$_cand" ]; then
+    REAL_SLPY="$_cand"
+    break
+  fi
+done
 
+# --- Find a REAL Python (only needed to run bootstrap when slpy isn't installed yet).
+# Try python3 then python, and verify each actually runs — this rejects the Windows
+# Store alias stub, which exits non-zero on `-c ""` instead of doing anything. ---
+find_python() {
+  for _py in python3 python; do
+    if command -v "$_py" >/dev/null 2>&1 && "$_py" -c "" >/dev/null 2>&1; then
+      printf '%s\n' "$_py"
+      return 0
+    fi
+  done
+  return 1
+}
 
-def _plugin_data_dir() -> Path:
-    """Must match bootstrap.py's resolution exactly, or the launcher looks for slpy in a
-    different dir than bootstrap installed it → endless re-install. Claude Code sets
-    CLAUDE_PLUGIN_DATA for the hook but NOT for this launcher (invoked via the Bash tool),
-    so fall back to the stable per-plugin data path, not the version-specific .data."""
-    env = os.environ.get("CLAUDE_PLUGIN_DATA")
-    if env:
-        return Path(env)
-    stable = Path.home() / ".claude" / "plugins" / "data" / "snapcode-snapcode"
-    if stable.parent.exists():
-        return stable
-    return PLUGIN_ROOT / ".data"
+# --- Not installed yet → run bootstrap once via the discovered Python, then re-check. ---
+if [ -z "$REAL_SLPY" ]; then
+  if _py="$(find_python)"; then
+    "$_py" "$PLUGIN_ROOT/bin/bootstrap.py" || true
+  else
+    printf '%s\n' "[snapcode] no usable Python found to run bootstrap." >&2
+    printf '%s\n' "          install Python 3 (python.org / brew / winget) and restart." >&2
+  fi
+  for _cand in "$PLUGIN_DATA/bin/slpy" "$PLUGIN_DATA/bin/slpy.exe"; do
+    if [ -x "$_cand" ] || [ -f "$_cand" ]; then
+      REAL_SLPY="$_cand"
+      break
+    fi
+  done
+fi
 
+if [ -z "$REAL_SLPY" ]; then
+  printf '%s\n' "[snapcode] slpy is not installed yet and bootstrap did not produce it." >&2
+  printf '%s\n' "          expected: $PLUGIN_DATA/bin/slpy (or slpy.exe)" >&2
+  exit 1
+fi
 
-PLUGIN_DATA = _plugin_data_dir()
-
-REAL_SLPY = PLUGIN_DATA / "bin" / ("slpy.exe" if os.name == "nt" else "slpy")
-BOOTSTRAP = PLUGIN_ROOT / "bin" / "bootstrap.py"
-
-
-def main() -> int:
-    if not REAL_SLPY.exists():
-        # Not installed yet — run bootstrap once, then retry.
-        subprocess.run([sys.executable, str(BOOTSTRAP)], check=False)
-    if not REAL_SLPY.exists():
-        sys.stderr.write(
-            "[snapcode] slpy is not installed yet and bootstrap did not produce it.\n"
-            f"          expected: {REAL_SLPY}\n"
-        )
-        return 1
-    # Forward all args to the real slpy, replacing this process where possible.
-    if os.name == "nt":
-        return subprocess.call([str(REAL_SLPY), *sys.argv[1:]])
-    os.execv(str(REAL_SLPY), [str(REAL_SLPY), *sys.argv[1:]])
-    return 0  # unreachable on POSIX
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+# --- Forward all args to the real slpy, replacing this process. ---
+exec "$REAL_SLPY" "$@"
