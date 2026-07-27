@@ -27,28 +27,35 @@ Set your SnapLogic credentials, pod URL, and org. **Most users should use
 
 ```bash
 # macOS / Linux (add to ~/.zshrc or ~/.bashrc to persist)
-export SNAPLOGIC_API_USER="you@yourcompany.com"
-export SNAPLOGIC_API_PASS="your-password"
-export SNAPLOGIC_BASE_URL="https://your-pod.snaplogic.com"
-export SNAPLOGIC_ORG_NAME="your-org-name"        # e.g. "mycompany" — the org you work in
+# Single quotes keep the values literal — a $, !, \ or backtick in your password
+# won't be expanded by the shell. (If the password itself contains a single quote,
+# close-escape-reopen: 'pa'\''ss' for pa'ss.)
+export SNAPLOGIC_API_USER='you@yourcompany.com'
+export SNAPLOGIC_API_PASS='your-password'
+export SNAPLOGIC_BASE_URL='https://your-pod.snaplogic.com'
+export SNAPLOGIC_ORG_NAME='your-org-name'        # e.g. mycompany — the org you work in
 # Advanced: skip the lookup by giving the exact ID instead (takes priority if both set):
-# export SNAPLOGIC_ORG_ID="your-24-char-org-id"
+# export SNAPLOGIC_ORG_ID='your-24-char-org-id'
 ```
 ```powershell
 # Windows PowerShell — session-only (lost when you close the window):
-$env:SNAPLOGIC_API_USER = "you@yourcompany.com"
-$env:SNAPLOGIC_API_PASS = "your-password"
-$env:SNAPLOGIC_BASE_URL = "https://your-pod.snaplogic.com"
-$env:SNAPLOGIC_ORG_NAME  = "your-org-name"
-# Advanced: $env:SNAPLOGIC_ORG_ID = "your-24-char-org-id"
+# Single quotes keep the values literal — a $ or backtick in your password won't be
+# treated as a PowerShell variable/escape. (If the password contains a single quote,
+# double it: 'pa''ss' for pa'ss.)
+$env:SNAPLOGIC_API_USER = 'you@yourcompany.com'
+$env:SNAPLOGIC_API_PASS = 'your-password'
+$env:SNAPLOGIC_BASE_URL = 'https://your-pod.snaplogic.com'
+$env:SNAPLOGIC_ORG_NAME  = 'your-org-name'
+# Advanced: $env:SNAPLOGIC_ORG_ID = 'your-24-char-org-id'
 ```
-To **persist** on Windows, set them at the User level instead (note the password uses
-single quotes so a literal `$` isn't treated as a PowerShell variable):
+To **persist** on Windows, set them at the User level instead (single-quoted values stay
+literal, so a `$` or backtick in your password isn't treated as a PowerShell variable/escape;
+if the password contains a single quote, double it: `'pa''ss'`):
 ```powershell
-[Environment]::SetEnvironmentVariable("SNAPLOGIC_API_USER", "you@yourcompany.com", "User")
-[Environment]::SetEnvironmentVariable("SNAPLOGIC_API_PASS", 'your-password', "User")
-[Environment]::SetEnvironmentVariable("SNAPLOGIC_BASE_URL", "https://your-pod.snaplogic.com", "User")
-[Environment]::SetEnvironmentVariable("SNAPLOGIC_ORG_NAME", "your-org-name", "User")
+[Environment]::SetEnvironmentVariable('SNAPLOGIC_API_USER', 'you@yourcompany.com', 'User')
+[Environment]::SetEnvironmentVariable('SNAPLOGIC_API_PASS', 'your-password', 'User')
+[Environment]::SetEnvironmentVariable('SNAPLOGIC_BASE_URL', 'https://your-pod.snaplogic.com', 'User')
+[Environment]::SetEnvironmentVariable('SNAPLOGIC_ORG_NAME', 'your-org-name', 'User')
 ```
 > Windows has no `source` equivalent: after `SetEnvironmentVariable`, the **current**
 > window won't see the values — **open a new terminal** (and restart Claude Code / your
