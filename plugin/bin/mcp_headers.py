@@ -6,12 +6,13 @@ merges its stdout JSON into the request headers. This is what stops Claude Code 
 attempting OAuth (which 404s on this endpoint) — the server wants an Authorization
 header (we send HTTP Basic).
 
-IMPORTANT (why this file is INSTALLED to a fixed path, not run from the plugin):
-`headersHelper` does NOT expand ${CLAUDE_PLUGIN_ROOT} and does NOT receive
-CLAUDE_PLUGIN_ROOT/DATA in its env (only CLAUDE_CODE_MCP_SERVER_NAME/_URL). So a
-plugin can't point headersHelper at a file inside itself. bootstrap.py copies this
-helper to ~/.claude/snapcode/ and the .mcp.json headersHelper targets that fixed
-path (cross-platform via `~`).
+`.mcp.json` points headersHelper straight at this file via ${CLAUDE_PLUGIN_ROOT}
+(Claude Code expands that placeholder in headersHelper on v2.1.195+), so the helper
+runs in place from the plugin — it is NOT copied anywhere. The headersHelper command
+must avoid POSIX-only shell syntax (e.g. `2>/dev/null`): on Windows it may run under
+cmd/PowerShell, which treat `/dev/null` as a path and abort the command, yielding an
+empty result and a failed MCP connect. Plain `python ... || python3 ...` works on
+cmd.exe, PowerShell, and /bin/sh alike.
 
 Credentials come from the user's ENVIRONMENT — SNAPLOGIC_API_USER + SNAPLOGIC_API_PASS.
 Users set these in their own shell per the SnapCode setup docs, and Claude Code passes

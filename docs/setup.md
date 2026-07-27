@@ -83,24 +83,25 @@ claude plugin marketplace add Snap-Developers/SnapCode-CC-Plugin
 claude plugin install snapcode@snapcode
 ```
 
-### First run — initialize once
+### First run
 
-The **first** Claude Code session after installing sets things up (installs the auth
-helper and the `slpy` CLI). On that first session the cloud MCP may show as not
-connected, because setup runs as the session starts. **Just start a session once to
-initialize, then restart it (or run a new session).** From then on everything is ready
-immediately — this one-time step is only needed right after install.
+Just start Claude Code in a directory where your credentials (step 2) are set:
 
 ```bash
 # in your repo/working dir, with credentials set (step 2):
-claude          # start once to initialize, then exit
-claude          # subsequent sessions: cloud MCP connected, slpy ready
+claude
 ```
 
-After the first init, on every session the plugin:
+On every session the plugin:
 - loads the SnapCode skills,
 - connects to the SnapLogic cloud MCP using your credentials from step 2,
 - has the `slpy` CLI ready.
+
+The cloud MCP authenticates with the auth helper that ships inside the plugin (no
+install step, so it's ready on the **first** session). The `slpy` CLI is installed on
+the first session by the SessionStart bootstrap; if you happen to run `slpy` before that
+finishes, the launcher installs it on demand. If the MCP shows as not connected, see
+Troubleshooting below (usually a credential or variable-name issue).
 
 ### Updating
 
@@ -140,7 +141,6 @@ Those two commands remove the plugin and the marketplace entry. To also clear th
 the plugin wrote outside its own directory (safe to delete — regenerated on reinstall):
 
 ```bash
-rm -rf ~/.claude/snapcode                       # MCP auth helper
 rm -rf ~/.claude/plugins/cache/snapcode         # installed slpy (large)
 ```
 
@@ -174,18 +174,19 @@ of the plugin's. After removing both, install the plugin per step 3.
   point it at a real directory) and retry.
 - **MCP shows "not authenticated" / 401** — credentials missing or wrong, or set in a
   different shell than the one running Claude Code. Re-check step 2 and restart.
-- **MCP shows a 404 / OAuth error** — usually means no `Authorization` header reached
-  the server; confirm your credentials are exported in the current environment.
-- **Windows: MCP never connects, and `~/.claude/snapcode/` doesn't exist** — the
-  `SessionStart` hook runs the bootstrap that installs the MCP auth helper. It tries
-  `python3` first (macOS) and falls back to `python` (Windows). If you're on a very old
-  plugin version the hook only tried `python3` — on Windows that hits the Microsoft Store
-  alias stub ("Python was not found"), so the hook failed silently and the auth helper was
-  never installed. Update the plugin (`claude plugin update snapcode@snapcode`) and restart.
+- **MCP shows a 404 / OAuth error** — means no `Authorization` header reached the server,
+  so it fell back to OAuth discovery (which 404s on this endpoint). The header comes from
+  the auth helper (`bin/mcp_headers.py`), run via the `.mcp.json` `headersHelper`. Confirm
+  your credentials are exported in the current environment. On **Windows**, also make sure
+  you're on a recent plugin version: older versions used `2>/dev/null` in the headersHelper
+  command, which fails under cmd/PowerShell (they treat `/dev/null` as a path), so the
+  helper returned nothing and the MCP couldn't authenticate. Update the plugin
+  (`claude plugin update snapcode@snapcode`) and restart.
 - **Installer unreachable / org lookup fails / "credentials missing"** — first check the
   variable **names**: the org var must be `SNAPLOGIC_ORG_NAME` (or `SNAPLOGIC_ORG_ID`), not
   `SNAPCODE_ORG_NAME`. A misspelled name is silently ignored, so the bootstrap can't resolve
   your org and the slpy installer endpoint call fails. Fix the name, open a new terminal, restart.
-- **`slpy` not found / not installed** — the bootstrap installs it on the first session;
-  start a session once to initialize, then restart. If your pod is behind a proxy/firewall,
-  the installer call must be able to reach the SLServer endpoint on your pod.
+- **`slpy` not found / not installed** — the bootstrap installs it on the first session
+  (and the launcher installs it on demand if you run `slpy` before that finishes). If it
+  still isn't there, start a fresh session. If your pod is behind a proxy/firewall, the
+  installer call must be able to reach the SLServer endpoint on your pod.

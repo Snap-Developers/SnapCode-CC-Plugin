@@ -17,9 +17,10 @@ Update cadence: slpy publishes very frequently, so we DON'T check every session.
 at most once per TTL window (default 24h). Between checks, an already-installed slpy is
 used as-is — no installer call, no network. Channel: develop (newest) for now.
 
-MCP auth: handled separately — this script also copies the MCP auth helper to a fixed
-path (~/.claude/snapcode/). The helper reads the user's SnapLogic credentials from their
-ENVIRONMENT; this script never handles credentials or reads a repo .env.
+MCP auth: handled separately and needs no setup here — .mcp.json points headersHelper
+straight at ${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py, which runs in place from the
+plugin. The helper reads the user's SnapLogic credentials from their ENVIRONMENT; this
+script never handles credentials or reads a repo .env.
 
 Design notes:
   - Invoked from the SessionStart hook as `python3 "${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.py"`.
