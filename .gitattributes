@@ -1,0 +1,8 @@
+# The slpy launcher is a POSIX sh script run via its shebang on macOS/Linux/Git-Bash.
+# It MUST have LF line endings — CRLF makes the shell fail with "bad interpreter: /bin/sh^M".
+plugin/bin/slpy text eol=lf
+plugin/bin/bootstrap.py text eol=lf
+plugin/bin/mcp_headers.py text eol=lf
+
+# Windows batch launcher must stay CRLF.
+plugin/bin/slpy.cmd text eol=crlf

@@ -27,21 +27,40 @@ Set your SnapLogic credentials, pod URL, and org. **Most users should use
 
 ```bash
 # macOS / Linux (add to ~/.zshrc or ~/.bashrc to persist)
-export SNAPLOGIC_API_USER="you@yourcompany.com"
-export SNAPLOGIC_API_PASS="your-password"
-export SNAPLOGIC_BASE_URL="https://your-pod.snaplogic.com"
-export SNAPLOGIC_ORG_NAME="your-org-name"        # e.g. "mycompany" — the org you work in
+# Single quotes keep the values literal — a $, !, \ or backtick in your password
+# won't be expanded by the shell. (If the password itself contains a single quote,
+# close-escape-reopen: 'pa'\''ss' for pa'ss.)
+export SNAPLOGIC_API_USER='you@yourcompany.com'
+export SNAPLOGIC_API_PASS='your-password'
+export SNAPLOGIC_BASE_URL='https://your-pod.snaplogic.com'
+export SNAPLOGIC_ORG_NAME='your-org-name'        # e.g. mycompany — the org you work in
 # Advanced: skip the lookup by giving the exact ID instead (takes priority if both set):
-# export SNAPLOGIC_ORG_ID="your-24-char-org-id"
+# export SNAPLOGIC_ORG_ID='your-24-char-org-id'
 ```
 ```powershell
-# Windows PowerShell (use [Environment]::SetEnvironmentVariable to persist)
-$env:SNAPLOGIC_API_USER = "you@yourcompany.com"
-$env:SNAPLOGIC_API_PASS = "your-password"
-$env:SNAPLOGIC_BASE_URL = "https://your-pod.snaplogic.com"
-$env:SNAPLOGIC_ORG_NAME  = "your-org-name"
-# Advanced: $env:SNAPLOGIC_ORG_ID = "your-24-char-org-id"
+# Windows PowerShell — session-only (lost when you close the window):
+# Single quotes keep the values literal — a $ or backtick in your password won't be
+# treated as a PowerShell variable/escape. (If the password contains a single quote,
+# double it: 'pa''ss' for pa'ss.)
+$env:SNAPLOGIC_API_USER = 'you@yourcompany.com'
+$env:SNAPLOGIC_API_PASS = 'your-password'
+$env:SNAPLOGIC_BASE_URL = 'https://your-pod.snaplogic.com'
+$env:SNAPLOGIC_ORG_NAME  = 'your-org-name'
+# Advanced: $env:SNAPLOGIC_ORG_ID = 'your-24-char-org-id'
 ```
+To **persist** on Windows, set them at the User level instead (single-quoted values stay
+literal, so a `$` or backtick in your password isn't treated as a PowerShell variable/escape;
+if the password contains a single quote, double it: `'pa''ss'`):
+```powershell
+[Environment]::SetEnvironmentVariable('SNAPLOGIC_API_USER', 'you@yourcompany.com', 'User')
+[Environment]::SetEnvironmentVariable('SNAPLOGIC_API_PASS', 'your-password', 'User')
+[Environment]::SetEnvironmentVariable('SNAPLOGIC_BASE_URL', 'https://your-pod.snaplogic.com', 'User')
+[Environment]::SetEnvironmentVariable('SNAPLOGIC_ORG_NAME', 'your-org-name', 'User')
+```
+> Windows has no `source` equivalent: after `SetEnvironmentVariable`, the **current**
+> window won't see the values — **open a new terminal** (and restart Claude Code / your
+> editor, since child processes inherit the environment at launch). Verify with
+> `[Environment]::GetEnvironmentVariable("SNAPLOGIC_ORG_NAME", "User")`.
 
 | Variable | What it is |
 |---|---|
@@ -52,6 +71,10 @@ $env:SNAPLOGIC_ORG_NAME  = "your-org-name"
 
 > Set these **before** starting Claude Code, in the same shell. `SNAPLOGIC_API_USER/PASS`
 > also authenticate the cloud MCP. If you change any, restart Claude Code.
+
+> ⚠️ The org variable is **`SNAPLOGIC_ORG_NAME`** (prefix `SNAPLOGIC_`), not
+> `SNAPCODE_ORG_NAME`. The bootstrap only reads the `SNAPLOGIC_*` names; a `SNAPCODE_*`
+> variable is ignored, so org resolution fails and the slpy installer can't reach your pod.
 
 ## 3. Install the plugin
 
@@ -159,6 +182,10 @@ of the plugin's. After removing both, install the plugin per step 3.
   plugin version the hook only tried `python3` — on Windows that hits the Microsoft Store
   alias stub ("Python was not found"), so the hook failed silently and the auth helper was
   never installed. Update the plugin (`claude plugin update snapcode@snapcode`) and restart.
+- **Installer unreachable / org lookup fails / "credentials missing"** — first check the
+  variable **names**: the org var must be `SNAPLOGIC_ORG_NAME` (or `SNAPLOGIC_ORG_ID`), not
+  `SNAPCODE_ORG_NAME`. A misspelled name is silently ignored, so the bootstrap can't resolve
+  your org and the slpy installer endpoint call fails. Fix the name, open a new terminal, restart.
 - **`slpy` not found / not installed** — the bootstrap installs it on the first session;
   start a session once to initialize, then restart. If your pod is behind a proxy/firewall,
   the installer call must be able to reach the SLServer endpoint on your pod.
