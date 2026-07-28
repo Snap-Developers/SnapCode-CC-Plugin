@@ -72,10 +72,6 @@ if the password contains a single quote, double it: `'pa''ss'`):
 > Set these **before** starting Claude Code, in the same shell. `SNAPLOGIC_API_USER/PASS`
 > also authenticate the cloud MCP. If you change any, restart Claude Code.
 
-> ⚠️ The org variable is **`SNAPLOGIC_ORG_NAME`** (prefix `SNAPLOGIC_`), not
-> `SNAPCODE_ORG_NAME`. The bootstrap only reads the `SNAPLOGIC_*` names; a `SNAPCODE_*`
-> variable is ignored, so org resolution fails and the slpy installer can't reach your pod.
-
 ## 3. Install the plugin
 
 ```bash
@@ -186,15 +182,10 @@ of the plugin's. After removing both, install the plugin per step 3.
   # macOS / Linux / Git-Bash (use python on Windows):
   python3 ~/.claude/plugins/cache/snapcode/*/*/bin/mcp_headers.py
   ```
-
-  On **Windows**, also make sure you're on a recent plugin version: older versions used
-  `2>/dev/null` in the headersHelper command, which fails under cmd/PowerShell (they treat
-  `/dev/null` as a path), so the helper returned nothing and the MCP couldn't authenticate.
-  Update the plugin (`claude plugin update snapcode@snapcode`) and restart.
 - **Installer unreachable / org lookup fails / "credentials missing"** — first check the
-  variable **names**: the org var must be `SNAPLOGIC_ORG_NAME` (or `SNAPLOGIC_ORG_ID`), not
-  `SNAPCODE_ORG_NAME`. A misspelled name is silently ignored, so the bootstrap can't resolve
-  your org and the slpy installer endpoint call fails. Fix the name, open a new terminal, restart.
+  variable **names** are spelled exactly `SNAPLOGIC_ORG_NAME` (or `SNAPLOGIC_ORG_ID`). A
+  misspelled name is silently ignored, so the bootstrap can't resolve your org and the slpy
+  installer endpoint call fails. Fix the name, open a new terminal, restart.
 - **`slpy` not found / not installed** — the bootstrap installs it on the first session
   (and the launcher installs it on demand if you run `slpy` before that finishes). If it
   still isn't there, start a fresh session. If your pod is behind a proxy/firewall, the
