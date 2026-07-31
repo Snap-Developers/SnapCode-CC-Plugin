@@ -8,12 +8,20 @@ skills, cloud MCP, and the slpy CLI — with one command. No repo to clone, no c
 See **[docs/setup.md](docs/setup.md)** for the full guide. In short:
 
 1. **Prerequisites:** Claude Code CLI + Python 3.8+.
-2. **Set your SnapLogic credentials + org in your environment** (not GitHub/AWS):
+2. **Set your SnapLogic credentials + org in your environment** (not GitHub/AWS).
+   macOS / Linux — add to `~/.zshrc` / `~/.bashrc` to persist:
    ```bash
    export SNAPLOGIC_API_USER="you@yourcompany.com"
    export SNAPLOGIC_API_PASS="your-password"
    export SNAPLOGIC_BASE_URL="https://your-pod.snaplogic.com"
    export SNAPLOGIC_ORG_NAME="your-org-name"   # or SNAPLOGIC_ORG_ID="<24-char hex>"
+   ```
+   Windows PowerShell — persist at the User level, then open a new terminal:
+   ```powershell
+   [Environment]::SetEnvironmentVariable('SNAPLOGIC_API_USER', 'you@yourcompany.com', 'User')
+   [Environment]::SetEnvironmentVariable('SNAPLOGIC_API_PASS', 'your-password', 'User')
+   [Environment]::SetEnvironmentVariable('SNAPLOGIC_BASE_URL', 'https://your-pod.snaplogic.com', 'User')
+   [Environment]::SetEnvironmentVariable('SNAPLOGIC_ORG_NAME', 'your-org-name', 'User')
    ```
 3. **Install the plugin:**
    ```bash

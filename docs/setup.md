@@ -152,11 +152,18 @@ Those two commands remove the plugin and the marketplace entry. To also clear th
 the plugin wrote outside its own directory (safe to delete — regenerated on reinstall):
 
 ```bash
+# macOS / Linux:
 rm -rf ~/.claude/plugins/cache/snapcode         # installed slpy (large)
 ```
+```powershell
+# Windows PowerShell:
+Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\plugins\cache\snapcode"
+```
 
-If you set the `SNAPLOGIC_*` env vars in your shell profile (step 2) and no longer want
-them, remove those lines from `~/.zshrc` / `~/.bashrc` too.
+If you set the `SNAPLOGIC_*` env vars (step 2) and no longer want them:
+- macOS / Linux: remove those `export` lines from `~/.zshrc` / `~/.bashrc`.
+- Windows PowerShell: clear each User-level var, e.g.
+  `[Environment]::SetEnvironmentVariable('SNAPLOGIC_API_USER', $null, 'User')` (repeat per variable).
 
 ## Migrating from the old install (clone + Docker)
 
@@ -165,8 +172,14 @@ image, installed slpy/MCP globally), remove those first — they **conflict** wi
 plugin:
 
 ```bash
+# macOS / Linux:
 claude mcp remove snaplogic     # old user-scope MCP clashes with the plugin's (same name)
 rm ~/.local/bin/slpy            # old slpy symlink shadows the plugin's on PATH
+```
+```powershell
+# Windows PowerShell:
+claude mcp remove snaplogic     # old user-scope MCP clashes with the plugin's (same name)
+Remove-Item "$env:USERPROFILE\.local\bin\slpy*"   # old slpy shim shadows the plugin's on PATH
 ```
 
 Symptoms if you skip this: the plugin's `snapcode:snaplogic` MCP shows **failed** (the old
@@ -180,9 +193,10 @@ of the plugin's. After removing both, install the plugin per step 3.
   globally. It **conflicts** with the plugin's MCP (same name). Remove it before/after
   installing: `claude mcp remove snaplogic` (check `claude mcp list` for where it's declared).
 - **`ENOENT: Bun could not find a file`** on `plugin marketplace add` / `install` — usually
-  a stale `CLAUDE_CONFIG_DIR` pointing at a directory that no longer exists. Run
-  `echo $CLAUDE_CONFIG_DIR`; if it's set to a missing path, `unset CLAUDE_CONFIG_DIR` (or
-  point it at a real directory) and retry.
+  a stale `CLAUDE_CONFIG_DIR` pointing at a directory that no longer exists. Check it, and if
+  it's set to a missing path, clear it (or point it at a real directory) and retry:
+  - macOS / Linux: `echo $CLAUDE_CONFIG_DIR` then `unset CLAUDE_CONFIG_DIR`
+  - Windows PowerShell: `$env:CLAUDE_CONFIG_DIR` then `Remove-Item Env:\CLAUDE_CONFIG_DIR`
 - **MCP shows "not authenticated" / 401** — credentials missing or wrong, or set in a
   different shell than the one running Claude Code. Re-check step 2 and restart.
 - **MCP shows a 404 / OAuth error** — means no `Authorization` header reached the server,
@@ -194,8 +208,12 @@ of the plugin's. After removing both, install the plugin per step 3.
   aren't set in this shell. The helper lives under the installed plugin:
 
   ```bash
-  # macOS / Linux / Git-Bash (use python on Windows):
+  # macOS / Linux / Git-Bash:
   python3 ~/.claude/plugins/cache/snapcode/*/*/bin/mcp_headers.py
+  ```
+  ```powershell
+  # Windows PowerShell (PS doesn't expand ~ or the glob, so resolve the path first):
+  python (Get-ChildItem "$env:USERPROFILE\.claude\plugins\cache\snapcode\*\*\bin\mcp_headers.py").FullName
   ```
 - **Installer unreachable / org lookup fails / "credentials missing"** — first check the
   variable **names** are spelled exactly `SNAPLOGIC_ORG_NAME` (or `SNAPLOGIC_ORG_ID`). A
