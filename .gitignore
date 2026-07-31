@@ -221,3 +221,6 @@ __marimo__/
 plugin/vendor/
 plugin/.data/
 *.whl
+
+# macOS Finder metadata — never commit
+.DS_Store

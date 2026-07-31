@@ -7,7 +7,7 @@ skills, cloud MCP, and the slpy CLI — with one command. No repo to clone, no c
 
 See **[docs/setup.md](docs/setup.md)** for the full guide. In short:
 
-1. **Prerequisites:** Claude Code CLI, Python 3.8+, Node.js 18+ (uv is auto-installed if missing).
+1. **Prerequisites:** Claude Code CLI + Python 3.8+.
 2. **Set your SnapLogic credentials + org in your environment** (not GitHub/AWS):
    ```bash
    export SNAPLOGIC_API_USER="you@yourcompany.com"
@@ -22,7 +22,13 @@ See **[docs/setup.md](docs/setup.md)** for the full guide. In short:
    ```
 
 Then start Claude Code — the plugin loads the skills, connects to the cloud MCP using
-your credentials, and installs the `slpy` CLI on demand.
+your credentials, and installs the `slpy` CLI on demand. On first launch you'll see a
+**welcome message** once setup finishes (the `slpy` install runs in the background, ~5–20s).
+Verify everything is wired up:
+
+- **MCP:** `/mcp` — `snapcode:snaplogic` should show *connected*
+- **Skills:** `/help` (or `/skills`) — the `snaplogic-slpy-gen` and `snaplogic-deploy` skills appear
+- **slpy CLI:** `! slpy eval-expr -e '1 + 2'` — prints `3`
 
 ## What's in here
 
@@ -31,13 +37,3 @@ your credentials, and installs the `slpy` CLI on demand.
 | `.claude-plugin/marketplace.json` | Marketplace catalog |
 | `plugin/` | The `snapcode` plugin (skills, cloud-MCP config, slpy bootstrap) |
 
-## Notes
-
-- This repo is **public on purpose** and contains **no private code**. The skills, MCP config,
-  and bootstrap scripts are not sensitive; the private `slpy` source is **never** shipped here.
-- `slpy` is installed from a private index (CodeArtifact) authorized by the user's SnapLogic
-  identity: on session start the bootstrap calls the SLServer installer endpoint
-  (`/api/1/rest/slserver/snapcode/{org_id}/fetch_installer`), which returns a short-lived,
-  token-embedded index URL, then `uv` installs slpy from it — so end users need no GitHub or AWS.
-- Status: end-to-end verified on canary (hook → installer endpoint → slpy installed). Pending:
-  the installer endpoint's deployment to prod (currently canary only).

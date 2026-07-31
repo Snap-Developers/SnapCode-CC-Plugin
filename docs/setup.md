@@ -11,32 +11,37 @@ Install these on your machine first:
 |---|---|---|
 | **Claude Code CLI** | Runs the plugin | `claude --version` |
 | **Python 3.8+** | Runs the plugin's bootstrap + auth helper | `python3 --version` (macOS) / `python --version` (Windows) |
-| **Node.js 18+** | Required by Claude Code, and by the Script snap in slpy | `node --version` |
-| **uv** | Installs the slpy CLI (the plugin auto-installs it if missing) | `uv --version` |
 
-> macOS uses `python3`; Windows uses `python`. The plugin handles both.
+> **macOS uses `python3`; Windows uses `python`** (on Windows `python3` is often a Microsoft
+> Store stub that isn't a real interpreter). The plugin discovers whichever one works, so
+> either is fine as long as one of them runs Python 3.
 
 ## 2. Set your SnapLogic credentials (in your environment)
 
 SnapCode authenticates to the SnapLogic cloud with **your existing SnapLogic
-credentials** — set them in your own shell environment. These are SnapLogic platform
-credentials, **not** GitHub or AWS.
+credentials** — set them in your own shell environment.
 
-Set your SnapLogic credentials, pod URL, and org. **Most users should use
-`SNAPLOGIC_ORG_NAME`** (just your org's name) — the plugin resolves the ID for you.
+Set your SnapLogic credentials, pod URL, and org.
+
+**macOS / Linux** — add these lines to your shell profile (`~/.zshrc` on macOS, or
+`~/.bashrc` on most Linux) so they **persist** across terminals, instead of a one-time
+`export` that's lost when you close the window:
 
 ```bash
-# macOS / Linux (add to ~/.zshrc or ~/.bashrc to persist)
+# Append to ~/.zshrc (macOS) or ~/.bashrc (Linux).
 # Single quotes keep the values literal — a $, !, \ or backtick in your password
 # won't be expanded by the shell. (If the password itself contains a single quote,
 # close-escape-reopen: 'pa'\''ss' for pa'ss.)
 export SNAPLOGIC_API_USER='you@yourcompany.com'
 export SNAPLOGIC_API_PASS='your-password'
 export SNAPLOGIC_BASE_URL='https://your-pod.snaplogic.com'
-export SNAPLOGIC_ORG_NAME='your-org-name'        # e.g. mycompany — the org you work in
+export SNAPLOGIC_ORG_NAME='your-org-name'
 # Advanced: skip the lookup by giving the exact ID instead (takes priority if both set):
 # export SNAPLOGIC_ORG_ID='your-24-char-org-id'
 ```
+After saving, run `source ~/.zshrc` (or open a new terminal) so the values load — then
+start Claude Code from that shell. Child processes inherit the environment at launch, so
+restart Claude Code / your editor if it was already open.
 ```powershell
 # Windows PowerShell — session-only (lost when you close the window):
 # Single quotes keep the values literal — a $ or backtick in your password won't be
@@ -78,6 +83,16 @@ if the password contains a single quote, double it: `'pa''ss'`):
 claude plugin marketplace add Snap-Developers/SnapCode-CC-Plugin
 claude plugin install snapcode@snapcode
 ```
+
+> **Install scope.** By default `claude plugin install` enables SnapCode for **you**
+> (user scope, `~/.claude/settings.json`). To scope it to a **single project** instead —
+> so everyone who opens that repo gets SnapCode automatically — add `--scope project`:
+> ```bash
+> claude plugin install snapcode@snapcode --scope project
+> ```
+> This writes to the repo's `.claude/settings.json` (`extraKnownMarketplaces` +
+> `enabledPlugins`). Commit that file and teammates get the plugin on their next session —
+> no per-person install. Each person still sets their own `SNAPLOGIC_*` credentials (step 2).
 
 ### First run
 
@@ -121,7 +136,7 @@ claude mcp list          # the "snapcode:snaplogic" MCP server should show Conne
 In a Claude Code session:
 ```
 ! which slpy             # should point inside the snapcode plugin cache
-! slpy translate --help  # the CLI runs
+! slpy --help  # the CLI runs
 ```
 Then ask Claude to list snaps or generate a pipeline — it should use the cloud MCP
 tools and the `slpy` CLI.
