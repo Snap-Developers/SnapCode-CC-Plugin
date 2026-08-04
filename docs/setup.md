@@ -19,109 +19,100 @@ Install these on your machine first:
 ## 2. Set your SnapLogic credentials (in your environment)
 
 SnapCode authenticates to the SnapLogic cloud with **your existing SnapLogic
-credentials** — set them in your own shell environment.
+credentials** — set them as environment variables in your own shell. These are
+SnapLogic platform credentials, **not** GitHub or AWS.
 
-Set your SnapLogic credentials, pod URL, and org.
+### What to set
 
-**macOS / Linux** — add these lines to your shell profile (`~/.zshrc` on macOS, or
-`~/.bashrc` on most Linux) so they **persist** across terminals, instead of a one-time
-`export` that's lost when you close the window:
+| Variable | What it is |
+|---|---|
+| `SNAPLOGIC_API_USER` / `SNAPLOGIC_API_PASS` | Your SnapLogic platform login (email + password). Also authenticates the SnapLogic MCP server. |
+| `SNAPLOGIC_BASE_URL` | Your pod URL — the same host you use for the SnapLogic UI. |
+| `SNAPLOGIC_ORG_NAME` | Your SnapLogic organization name — usually your company/team name. Required to install the `slpy` CLI. If you're not sure of the exact name, ask your SnapLogic admin. |
+
+> Set these **before** starting Claude Code. If you change any later, restart Claude Code.
+
+Now set them for your platform:
+
+### 2a. macOS / Linux
+
+Add these lines to your shell profile — `~/.zshrc` on macOS, or `~/.bashrc` on most
+Linux — so they **persist** across terminals, instead of a one-time `export` that's lost
+when you close the window:
 
 ```bash
-# Append to ~/.zshrc (macOS) or ~/.bashrc (Linux).
-# Single quotes keep the values literal — a $, !, \ or backtick in your password
-# won't be expanded by the shell. (If the password itself contains a single quote,
-# close-escape-reopen: 'pa'\''ss' for pa'ss.)
 export SNAPLOGIC_API_USER='you@yourcompany.com'
 export SNAPLOGIC_API_PASS='your-password'
 export SNAPLOGIC_BASE_URL='https://your-pod.snaplogic.com'
 export SNAPLOGIC_ORG_NAME='your-org-name'
-# Advanced: skip the lookup by giving the exact ID instead (takes priority if both set):
-# export SNAPLOGIC_ORG_ID='your-24-char-org-id'
 ```
+
+Single quotes keep the values literal, so a `$`, `!`, `\`, or backtick in your password
+won't be expanded by the shell. (If the password itself contains a single quote, use
+`'pa'\''ss'` for `pa'ss`.)
+
 After saving, run `source ~/.zshrc` (or open a new terminal) so the values load — then
 start Claude Code from that shell. Child processes inherit the environment at launch, so
 restart Claude Code / your editor if it was already open.
-```powershell
-# Windows PowerShell — session-only (lost when you close the window):
-# Single quotes keep the values literal — a $ or backtick in your password won't be
-# treated as a PowerShell variable/escape. (If the password contains a single quote,
-# double it: 'pa''ss' for pa'ss.)
-$env:SNAPLOGIC_API_USER = 'you@yourcompany.com'
-$env:SNAPLOGIC_API_PASS = 'your-password'
-$env:SNAPLOGIC_BASE_URL = 'https://your-pod.snaplogic.com'
-$env:SNAPLOGIC_ORG_NAME  = 'your-org-name'
-# Advanced: $env:SNAPLOGIC_ORG_ID = 'your-24-char-org-id'
-```
-To **persist** on Windows, set them at the User level instead (single-quoted values stay
-literal, so a `$` or backtick in your password isn't treated as a PowerShell variable/escape;
-if the password contains a single quote, double it: `'pa''ss'`):
+
+### 2b. Windows (PowerShell)
+
+Set them at the User level so they **persist** and new terminals see them:
+
 ```powershell
 [Environment]::SetEnvironmentVariable('SNAPLOGIC_API_USER', 'you@yourcompany.com', 'User')
 [Environment]::SetEnvironmentVariable('SNAPLOGIC_API_PASS', 'your-password', 'User')
 [Environment]::SetEnvironmentVariable('SNAPLOGIC_BASE_URL', 'https://your-pod.snaplogic.com', 'User')
 [Environment]::SetEnvironmentVariable('SNAPLOGIC_ORG_NAME', 'your-org-name', 'User')
 ```
-> Windows has no `source` equivalent: after `SetEnvironmentVariable`, the **current**
-> window won't see the values — **open a new terminal** (and restart Claude Code / your
-> editor, since child processes inherit the environment at launch). Verify with
-> `[Environment]::GetEnvironmentVariable("SNAPLOGIC_ORG_NAME", "User")`.
 
-| Variable | What it is |
-|---|---|
-| `SNAPLOGIC_API_USER` / `_PASS` | Your SnapLogic platform login (email + password). **Not** GitHub/AWS. |
-| `SNAPLOGIC_BASE_URL` | Your pod URL — the same host you use for the SnapLogic UI / MCP endpoint. |
-| `SNAPLOGIC_ORG_NAME` | **Recommended.** Your org name (e.g. `mycompany`) — the name you see in the SnapLogic UI. The plugin resolves the ID automatically. |
-| `SNAPLOGIC_ORG_ID` | Advanced/optional. The exact 24-char hex org ID. Only visible in Manager Settings to org admins, so most users should use `SNAPLOGIC_ORG_NAME` instead. |
+Single-quoted values stay literal, so a `$` or backtick in your password isn't treated as
+a PowerShell variable/escape (if the password contains a single quote, double it:
+`'pa''ss'`).
 
-> Set these **before** starting Claude Code, in the same shell. `SNAPLOGIC_API_USER/PASS`
-> also authenticate the cloud MCP. If you change any, restart Claude Code.
+Windows has no `source` equivalent: after `SetEnvironmentVariable`, the **current** window
+won't see the values — **open a new terminal** (and restart Claude Code / your editor,
+since child processes inherit the environment at launch). Verify with
+`[Environment]::GetEnvironmentVariable("SNAPLOGIC_ORG_NAME", "User")`.
 
 ## 3. Install the plugin
+
+Run these two commands:
 
 ```bash
 claude plugin marketplace add Snap-Developers/SnapCode-CC-Plugin
 claude plugin install snapcode@snapcode
 ```
 
-> **Install scope.** By default `claude plugin install` enables SnapCode for **you**
-> (user scope, `~/.claude/settings.json`). To scope it to a **single project** instead —
-> so everyone who opens that repo gets SnapCode automatically — add `--scope project`:
-> ```bash
-> claude plugin install snapcode@snapcode --scope project
-> ```
-> This writes to the repo's `.claude/settings.json` (`extraKnownMarketplaces` +
-> `enabledPlugins`). Commit that file and teammates get the plugin on their next session —
-> no per-person install. Each person still sets their own `SNAPLOGIC_*` credentials (step 2).
-
 ### First run
 
-Just start Claude Code in a directory where your credentials (step 2) are set:
+From your working directory, with your credentials (step 2) set, just start Claude Code:
 
 ```bash
-# in your repo/working dir, with credentials set (step 2):
 claude
 ```
 
 On every session the plugin:
 - loads the SnapCode skills,
-- connects to the SnapLogic cloud MCP using your credentials from step 2,
+- connects to the SnapLogic MCP server using your credentials from step 2,
 - has the `slpy` CLI ready.
 
-The cloud MCP authenticates with the auth helper that ships inside the plugin (no
-install step, so it's ready on the **first** session). The `slpy` CLI is installed on
-the first session by the SessionStart bootstrap; if you happen to run `slpy` before that
-finishes, the launcher installs it on demand. If the MCP shows as not connected, see
-Troubleshooting below (usually a credential or variable-name issue).
+To connect, an auth helper that ships inside the plugin authenticates to the SnapLogic MCP
+server with your credentials (no install step, so it's ready on the **first** session). The
+`slpy` CLI is installed on the first session by the SessionStart bootstrap; if you happen to
+run `slpy` before that finishes, the launcher installs it on demand. If the MCP server shows
+as not connected, see Troubleshooting below (usually a credential or variable-name issue).
 
 ### Updating
 
-The plugin is a snapshot cloned locally — it does **not** auto-update. To pull the
-latest (new skills, fixes):
+The plugin is a snapshot cloned locally — it does **not** auto-update. New plugin versions
+ship with SnapLogic's monthly platform release, so updating once per release cycle keeps you
+current on skills and fixes. To pull the latest, run these two commands (the first fetches the
+latest from the repo, the second applies it):
 
 ```bash
-claude plugin marketplace update snapcode     # fetch the latest from the repo
-claude plugin update snapcode@snapcode         # apply it
+claude plugin marketplace update snapcode
+claude plugin update snapcode@snapcode
 ```
 
 > The `slpy` CLI is separate: the plugin refreshes it on its own (a daily check against
@@ -129,17 +120,26 @@ claude plugin update snapcode@snapcode         # apply it
 
 ## 4. Verify
 
+Confirm the two pieces are working. First, check the SnapLogic MCP server is connected:
+
 ```bash
-claude mcp list          # the "snapcode:snaplogic" MCP server should show Connected
+claude mcp list
 ```
 
-In a Claude Code session:
+Expected: `snapcode:snaplogic` is listed and shows **Connected**.
+
+Then, inside a Claude Code session, confirm the `slpy` CLI is on PATH and runs:
+
 ```
-! which slpy             # should point inside the snapcode plugin cache
-! slpy --help  # the CLI runs
+! which slpy
+! slpy --help
 ```
-Then ask Claude to list snaps or generate a pipeline — it should use the cloud MCP
-tools and the `slpy` CLI.
+
+Expected: `which slpy` points inside the SnapCode plugin cache (not an old
+`~/.local/bin/slpy`), and `slpy --help` prints the CLI usage instead of "command not found".
+
+Finally, ask Claude to list snaps or generate a pipeline — it should use the SnapLogic MCP
+server tools and the `slpy` CLI to do it.
 
 ## 5. Uninstall
 
@@ -149,14 +149,15 @@ claude plugin marketplace remove snapcode
 ```
 
 Those two commands remove the plugin and the marketplace entry. To also clear the bits
-the plugin wrote outside its own directory (safe to delete — regenerated on reinstall):
+the plugin wrote outside its own directory (safe to delete — regenerated on reinstall; this
+is the installed `slpy`, which can be large):
 
+macOS / Linux:
 ```bash
-# macOS / Linux:
-rm -rf ~/.claude/plugins/cache/snapcode         # installed slpy (large)
+rm -rf ~/.claude/plugins/cache/snapcode
 ```
+Windows (PowerShell):
 ```powershell
-# Windows PowerShell:
 Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\plugins\cache\snapcode"
 ```
 
@@ -171,55 +172,31 @@ If you previously used the old SnapCode distribution (cloned the repo, ran the D
 image, installed slpy/MCP globally), remove those first — they **conflict** with the
 plugin:
 
+Remove the old user-scope `snaplogic` MCP and the old `slpy` shim on PATH.
+
+macOS / Linux:
 ```bash
-# macOS / Linux:
-claude mcp remove snaplogic     # old user-scope MCP clashes with the plugin's (same name)
-rm ~/.local/bin/slpy            # old slpy symlink shadows the plugin's on PATH
+claude mcp remove snaplogic
+rm ~/.local/bin/slpy
 ```
+Windows (PowerShell):
 ```powershell
-# Windows PowerShell:
-claude mcp remove snaplogic     # old user-scope MCP clashes with the plugin's (same name)
-Remove-Item "$env:USERPROFILE\.local\bin\slpy*"   # old slpy shim shadows the plugin's on PATH
+claude mcp remove snaplogic
+Remove-Item "$env:USERPROFILE\.local\bin\slpy*"
 ```
 
-Symptoms if you skip this: the plugin's `snapcode:snaplogic` MCP shows **failed** (the old
-`snaplogic` MCP wins the name), and `which slpy` still points at the old dev symlink instead
-of the plugin's. After removing both, install the plugin per step 3.
+> **Note:** If you skip this, you'll have two SnapLogic MCPs registered — the old `snaplogic`
+> and the plugin's `snapcode:snaplogic`. They don't share a name, but keeping both is redundant
+> and confusing, and `which slpy` may still resolve to the old dev symlink instead of the
+> plugin's. After removing both old bits, install the plugin per step 3.
 
 ## Troubleshooting
 
-- **Already used the old SnapCode repo? Remove the old `snaplogic` MCP first.** If you
-  previously cloned the SnapCode repo, you likely have a `snaplogic` MCP server registered
-  globally. It **conflicts** with the plugin's MCP (same name). Remove it before/after
-  installing: `claude mcp remove snaplogic` (check `claude mcp list` for where it's declared).
-- **`ENOENT: Bun could not find a file`** on `plugin marketplace add` / `install` — usually
-  a stale `CLAUDE_CONFIG_DIR` pointing at a directory that no longer exists. Check it, and if
-  it's set to a missing path, clear it (or point it at a real directory) and retry:
-  - macOS / Linux: `echo $CLAUDE_CONFIG_DIR` then `unset CLAUDE_CONFIG_DIR`
-  - Windows PowerShell: `$env:CLAUDE_CONFIG_DIR` then `Remove-Item Env:\CLAUDE_CONFIG_DIR`
-- **MCP shows "not authenticated" / 401** — credentials missing or wrong, or set in a
-  different shell than the one running Claude Code. Re-check step 2 and restart.
-- **MCP shows a 404 / OAuth error** — means no `Authorization` header reached the server,
-  so it fell back to OAuth discovery (which 404s on this endpoint). The header comes from
-  the auth helper (`bin/mcp_headers.py`), run via the `.mcp.json` `headersHelper`. Confirm
-  your credentials are exported in the current environment. To check directly, run the
-  helper by hand in the same shell — if it prints `{"Authorization": "Basic ..."}` your
-  creds are being read; if it prints just `{}`, `SNAPLOGIC_API_USER`/`SNAPLOGIC_API_PASS`
-  aren't set in this shell. The helper lives under the installed plugin:
-
-  ```bash
-  # macOS / Linux / Git-Bash:
-  python3 ~/.claude/plugins/cache/snapcode/*/*/bin/mcp_headers.py
-  ```
-  ```powershell
-  # Windows PowerShell (PS doesn't expand ~ or the glob, so resolve the path first):
-  python (Get-ChildItem "$env:USERPROFILE\.claude\plugins\cache\snapcode\*\*\bin\mcp_headers.py").FullName
-  ```
-- **Installer unreachable / org lookup fails / "credentials missing"** — first check the
-  variable **names** are spelled exactly `SNAPLOGIC_ORG_NAME` (or `SNAPLOGIC_ORG_ID`). A
-  misspelled name is silently ignored, so the bootstrap can't resolve your org and the slpy
-  installer endpoint call fails. Fix the name, open a new terminal, restart.
-- **`slpy` not found / not installed** — the bootstrap installs it on the first session
-  (and the launcher installs it on demand if you run `slpy` before that finishes). If it
-  still isn't there, start a fresh session. If your pod is behind a proxy/firewall, the
-  installer call must be able to reach the SLServer endpoint on your pod.
+| Symptom | Cause & fix |
+|---|---|
+| **MCP shows "not authenticated" / 401** | Credentials missing or wrong, or set in a different shell than the one running Claude Code. Re-check step 2 and restart Claude Code. |
+| **MCP shows a 404 / OAuth error** | No `Authorization` header reached the server, so it fell back to OAuth discovery (which 404s here). The header comes from the auth helper (`bin/mcp_headers.py`). Confirm your credentials are set in the current environment, then run the helper by hand in the same shell to check — macOS/Linux/Git-Bash: `python3 ~/.claude/plugins/cache/snapcode/*/*/bin/mcp_headers.py` · Windows PowerShell: `python (Get-ChildItem "$env:USERPROFILE\.claude\plugins\cache\snapcode\*\*\bin\mcp_headers.py").FullName`. If it prints `{"Authorization": "Basic ..."}` your creds are read; if it prints `{}`, `SNAPLOGIC_API_USER`/`SNAPLOGIC_API_PASS` aren't set in this shell. |
+| **Installer unreachable / org lookup fails / "credentials missing"** | Check the variable **name** is spelled exactly `SNAPLOGIC_ORG_NAME` — a misspelled name is silently ignored, so the org can't resolve and the slpy install fails. Fix the name, open a new terminal, restart. |
+| **`slpy` not found / not installed** | The bootstrap installs it on the first session (and the launcher installs it on demand). If it's still missing, start a fresh session. If your pod is behind a proxy/firewall, the installer call must be able to reach the SLServer endpoint on your pod. |
+| **`ENOENT: Bun could not find a file`** on `plugin marketplace add` / `install` | Usually a stale `CLAUDE_CONFIG_DIR` pointing at a directory that no longer exists. Check and clear it, then retry — macOS/Linux: `echo $CLAUDE_CONFIG_DIR` then `unset CLAUDE_CONFIG_DIR` · Windows PowerShell: `$env:CLAUDE_CONFIG_DIR` then `Remove-Item Env:\CLAUDE_CONFIG_DIR`. |
+| **Used the old SnapCode repo before?** | The old distribution registered a user-scope MCP named `snaplogic`. The plugin adds its own (`snapcode:snaplogic`) — they don't share a name, but keeping both is redundant and confusing. Remove the old one: `claude mcp remove snaplogic` (run `claude mcp list` to see what's registered). |
