@@ -468,7 +468,7 @@ snap_s3_upload = S3Upload(
         "+lib.cdc_config.Account.Details.FULL_S3.Prefix_Date"
         "+lib.cdc_config.Account.Details.FULL_S3.File_Name"
     ),
-    pm_account="lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())",
+    pm_account=Expr('lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())'),
 )
 ```
 
@@ -893,7 +893,7 @@ snap_source = SnowflakeExecute(
     ),
     query_type="Auto",
     pass_through=True,
-    pm_account="lib.my_shared_accounts.Snowflake_Account.get(lib.my_shared_accounts.getEnv())",
+    pm_account=Expr('lib.my_shared_accounts.Snowflake_Account.get(lib.my_shared_accounts.getEnv())'),
 )
 
 # ── Lowercase Keys ─────────────────────────────────────────────────────────
@@ -1125,7 +1125,7 @@ snap_s3_delta = S3Upload(
         "+lib.cdc_config.Account.Details.DELTA_S3.Prefix_Date"
         "+lib.cdc_config.Account.Details.DELTA_S3.File_Name"
     ),
-    pm_account="lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())",
+    pm_account=Expr('lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())'),
     execution_mode="Execute only",
 )
 
@@ -1188,7 +1188,7 @@ snap_s3_full = S3Upload(
         "+lib.cdc_config.Account.Details.FULL_S3.Prefix_Date"
         "+lib.cdc_config.Account.Details.FULL_S3.File_Name"
     ),
-    pm_account="lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())",
+    pm_account=Expr('lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())'),
     execution_mode="Execute only",
 )
 

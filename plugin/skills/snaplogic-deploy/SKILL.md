@@ -89,9 +89,22 @@ Always follow these steps in order. Never skip a step.
 
 If only a `.slp` exists with no `.py`, skip to Step 3.
 
+**New pipeline** (generated from scratch in this workflow):
+
 ```bash
 slpy translate -src {pipeline}.py -dest {pipeline}.slp -strict
 ```
+
+**Edit of an existing platform pipeline** (the `.py` descends from a platform-exported `.slp` — the user provided one, or an earlier `.slp` → `.py` translate produced it):
+
+```bash
+slpy translate -src {pipeline}.py -dest {pipeline}.slp -strict --preserve-ids {original}.slp
+```
+
+`--preserve-ids` keeps each kept snap's original UUID and canvas position, so the overwrite-import in Step 5/7 is an **edit** — existing links, snap identity, and layout survive. Without it the platform sees a brand-new set of snaps and drops all existing wiring. Success prints `preserve-ids: N snap UUID(s) preserved, M fresh`.
+
+- `{original}.slp` is the **unmodified platform export**, not the output of a previous translate in this loop. There is no download tool yet — if the user hasn't provided it, ask them to export it from SnapLogic Designer first.
+- The `.py`'s `snap_N` variable names are the join keys to the original snaps — they must not be renamed during edits.
 
 Fix any translation errors before proceeding. Do not deploy a pipeline that fails translation.
 
@@ -213,8 +226,8 @@ If validation passes but `input_views` and `output_views` are empty:
 If validation returns errors:
 
 1. **Map each error to its source** — identify which snap and parameter is at fault using the snap label from the error.
-2. **Fix the `.py` source** — always fix the SLPy source, never the `.slp` directly.
-3. **Re-translate** — run `slpy translate -strict` again (Step 1).
+2. **Fix the `.py` source** — always fix the SLPy source, never the `.slp` directly. Don't "fix" account bindings you weren't asked to change — `pm_account=Expr('lib.env.*')` refs are deliberate environment-independent bindings and must be left as found.
+3. **Re-translate** — run `slpy translate -strict` again (Step 1). If this deploy is an edit of an existing platform pipeline, keep passing `--preserve-ids {original}.slp` on **every** re-translate — dropping it on a fix iteration re-mints all UUIDs and breaks the links the earlier iterations preserved.
 4. **Re-upload supporting files if changed** (Step 2).
 5. **Re-import without confirmation** — `Read` the freshly re-translated `.slp` and pass it as `slp_content` with `duplicate_check=False` to overwrite in place. No need to ask again for fix iterations, the user already approved the target.
 6. **Re-validate** (Step 6).
