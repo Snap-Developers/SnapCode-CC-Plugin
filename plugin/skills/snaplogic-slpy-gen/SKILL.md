@@ -63,6 +63,18 @@ slpy translate -src {pipeline_name}.py -dest {pipeline_name}.slp -strict -expr -
 
 Without this flag, strict mode rejects custom snaps with `snap name '...' not found in catalog`. If you see that error on a snap defined in `## Custom Snap Definitions`, you forgot `--schema-path`, not the snap name — re-run with the flag instead of "fixing" the name.
 
+**Round-trip edits: `--preserve-ids <original.slp>` is MANDATORY when the `.py` descends from an existing platform pipeline** (the user provided a platform-exported `.slp` that was translated to `.py`, or you are refining such a `.py`):
+
+```bash
+slpy translate -src {pipeline_name}.py -dest {pipeline_name}.slp -strict --preserve-ids {original}.slp
+```
+
+Without the flag, translate mints fresh UUIDs for every snap — on re-import the platform sees a brand-new set of snaps instead of an edit, dropping all existing links and snap identity. With it, kept snaps retain their original UUIDs and canvas positions, new snaps get fresh UUIDs placed next to their neighbors, and removed snaps are dropped. Success prints a summary: `preserve-ids: 5 snap UUID(s) preserved, 1 fresh`.
+
+- **Do not rename `snap_N` variables when editing an encoded `.py`** — the variable name is the join key back to the original snaps; renaming reads as delete + add and loses that snap's identity.
+- The flag only applies to the `.py` → `.slp` direction, and composes with `-strict`, `-expr`, and `--schema-path`.
+- Keep the original `.slp` export unmodified; pass the same file on every re-translate in the session.
+
 Example (file in current directory):
 ```bash
 slpy translate -src countries_by_continent.py -dest countries_by_continent.slp -strict
@@ -235,6 +247,10 @@ Before starting, assess complexity and choose the appropriate workflow pattern:
 2. If adding new snaps: `pygen_get_snap_documentation([new_connectivity_snaps])`
 3. Apply modifications (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
 4. If changes affect transformation logic: re-execute (`slpy exec X.py`) or update test segment and re-execute
+
+**If the pipeline came from the platform** (a platform-exported `.slp` translated to `.py`), two extra rules apply to every refinement:
+- Translate with `--preserve-ids original.slp` (see §2) so snap UUIDs, links, and canvas positions survive re-import — and keep the existing `snap_N` variable names.
+- Preserve account bindings you didn't ask to change — in particular `pm_account=Expr('lib.env.*')` expression refs (see Rule 10).
 
 ### Tool Efficiency Rules
 
@@ -815,7 +831,7 @@ After successful execution, verify the output:
 
 ## 5. Critical Generation Rules
 
-These 9 rules prevent 90% of SLPy generation errors. Study these carefully before generating any pipeline.
+These 10 rules prevent 90% of SLPy generation errors. Study these carefully before generating any pipeline.
 
 ### Rule 1: Expr() Wrapper Decision (MOST COMMON ERROR)
 
@@ -1401,6 +1417,35 @@ BinaryFileWriter(filename='output.json', file_action='OVERWRITE')
 BinaryFileReader(filename='data.csv')       # ERROR: no 'filename' parameter
 BinaryFileWriter(file_path='output.json')   # ERROR: no 'file_path' parameter
 ```
+
+### Rule 10: Account References (pm_account)
+
+Snaps bind to platform connection accounts via `pm_account`. There are two valid forms:
+
+```python
+# Static binding — references one specific account asset
+snap_0 = APISuiteHTTPClient(
+    label='Call API', http_method='POST', uri='https://example.com',
+    pm_account=Account(
+        ref_class_id='com-snaplogic-snaps-apisuite-accounts-headerauthaccount',
+        label='my-account',
+        ref_id='...'
+    )
+)
+
+# Expression binding — resolved at runtime, typically from an expression library,
+# so the same pipeline works across Dev/Test/Prod environments
+snap_0 = APISuiteHTTPClient(
+    label='Call API', http_method='POST', uri='https://example.com',
+    pm_account=Expr('lib.env.httpClientAccount')
+)
+```
+
+**Preservation rules when editing an existing pipeline:**
+- **NEVER remove, rewrite, or "simplify" a `pm_account=Expr('lib.env.*')` binding** unless the user explicitly asks to change the account. It is a deliberate environment-independence mechanism, not a label — replacing it with a static account (or dropping it) breaks the pipeline in every other environment.
+- Leave `pm_account` exactly as found on snaps whose accounts you weren't asked to touch.
+- **NEVER pass a bare string** (`pm_account="lib.env.acct"`) — the parser silently produces an empty account binding. Use `Expr(...)` for expression refs or `Account(...)` for static refs.
+- SnapCode cannot create account assets; a static `Account(...)` must reference one that already exists on the platform (see deploy-skill limitations).
 
 ### Never Guess — Consult Tools
 
