@@ -1424,6 +1424,8 @@ Snaps bind to platform connection accounts via `pm_account`. There are two valid
 
 ```python
 # Static binding — references one specific account asset
+from slpy.modules.Snap import Account
+
 snap_0 = APISuiteHTTPClient(
     label='Call API', http_method='POST', uri='https://example.com',
     pm_account=Account(
@@ -1530,6 +1532,7 @@ from slpy.modules.Pipeline.error_pipeline.ErrorPipeline import ErrorPipeline
 from slpy.modules.Pipeline.error_param_table.ErrorParamTable import ErrorParamTable
 from slpy.modules.Pipeline.expression_libraries.ExpressionLibraries import ExpressionLibraries
 from slpy.modules.Pipeline.utils import Expr
+from slpy.modules.Snap import Account  # only when binding a static account via pm_account=Account(...)
 
 p = Pipeline(label='Pipeline Name')
 
