@@ -291,7 +291,17 @@ def install_slpy_from_index(uv: str, index_url: str) -> bool:
                UV_DEFAULT_INDEX=index_url)
     log("installing/updating slpy from the private index…")
     try:
-        subprocess.run([uv, "tool", "install", "--force", "slpy"], env=env, check=True)
+        # --native-tls: trust the OS native certificate store (Windows cert store /
+        #   macOS Keychain / Linux CA bundle) so uv can reach the private index from
+        #   behind a corporate SSL-inspection proxy with a custom root CA. Without it,
+        #   uv's bundled TLS stack rejects the connection (UnknownIssuer) and never
+        #   reaches our index. NOTE: the var is UV_NATIVE_TLS — uv has NO UV_SYSTEM_CERTS.
+        # --no-build-package slpy: our slpy is a pre-built wheel on the private index.
+        #   If resolution ever falls through to public PyPI (where "slpy" is an
+        #   unrelated 3rd-party package), forbid building it from source so the install
+        #   fails loudly instead of silently compiling a foreign package.
+        subprocess.run([uv, "tool", "install", "--force", "--native-tls",
+                        "--no-build-package", "slpy", "slpy"], env=env, check=True)
     except subprocess.CalledProcessError as e:
         log(f"slpy install failed: {e}")
         return False

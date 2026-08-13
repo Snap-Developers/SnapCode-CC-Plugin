@@ -9,12 +9,36 @@ Install these on your machine first:
 
 | Tool | Why | Check |
 |---|---|---|
-| **Claude Code CLI** | Runs the plugin | `claude --version` |
+| **Claude Code CLI** (v2.1.195+) | Runs the plugin; must support plugin marketplaces | `claude --version` |
 | **Python 3.8+** | Runs the plugin's bootstrap + auth helper | `python3 --version` (macOS) / `python --version` (Windows) |
 
 > **macOS uses `python3`; Windows uses `python`** (on Windows `python3` is often a Microsoft
 > Store stub that isn't a real interpreter). The plugin discovers whichever one works, so
 > either is fine as long as one of them runs Python 3.
+
+### Install or update the Claude Code CLI
+
+Don't have it yet? Install it —
+
+macOS / Linux / WSL:
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+Windows PowerShell:
+```powershell
+irm https://claude.ai/install.ps1 | iex
+```
+(Or on any platform via npm: `npm install -g @anthropic-ai/claude-code`.)
+
+Already have it? Plugin marketplaces need **v2.1.195 or later**. Native installs
+auto-update; to update now:
+```bash
+claude update
+```
+(Homebrew: `brew upgrade claude-code` · npm: `npm install -g @anthropic-ai/claude-code@latest`.)
+
+Check your version with `claude --version` (prints `X.Y.Z (Claude Code)`). If
+`claude plugin …` isn't recognized or the version is below 2.1.195, update first.
 
 ## 2. Set your SnapLogic credentials (in your environment)
 

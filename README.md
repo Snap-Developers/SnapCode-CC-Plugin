@@ -7,7 +7,7 @@ skills, cloud MCP, and the slpy CLI — with one command. No repo to clone, no c
 
 See **[docs/setup.md](docs/setup.md)** for the full guide. In short:
 
-1. **Prerequisites:** Claude Code CLI + Python 3.8+.
+1. **Prerequisites:** Claude Code CLI **v2.1.195+** (check `claude --version`, update with `claude update`) + Python 3.8+. See [docs/setup.md](docs/setup.md#1-prerequisites) for install commands.
 2. **Set your SnapLogic credentials + org in your environment** (not GitHub/AWS).
    macOS / Linux — add to `~/.zshrc` / `~/.bashrc` to persist:
    ```bash

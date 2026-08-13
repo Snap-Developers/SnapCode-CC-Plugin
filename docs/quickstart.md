@@ -6,7 +6,7 @@
 
 ## 1. Prerequisites
 
-- Claude Code CLI + Python 3.8+ (`uv` auto-installs if missing; no Node, git, or AWS/GitHub needed).
+- Claude Code CLI **v2.1.195+** (run `claude update` to refresh) + Python 3.8+ (`uv` auto-installs if missing; no Node, git, or AWS/GitHub needed).
 
 ## 2. Set your credentials (canary)
 
