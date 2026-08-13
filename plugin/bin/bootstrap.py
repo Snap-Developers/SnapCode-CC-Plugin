@@ -215,10 +215,22 @@ TLS_TRUST_HINT = (
 )
 
 
+# Set when any HTTPS call in this run failed TLS certificate verification, so main() can
+# emit the TLS hint at its final (most visible) exit point instead of the misleading
+# "credentials missing" message — see fetch_index_url / resolve_org_id.
+_TLS_TRUST_FAILURE = False
+
+
 def _is_tls_trust_error(e: Exception) -> bool:
     """True if a urlopen failure was a TLS certificate-verification failure (vs. a real
-    connectivity/auth error). urllib wraps the ssl error in URLError.reason."""
-    return isinstance(e, ssl.SSLError) or isinstance(getattr(e, "reason", None), ssl.SSLError)
+    connectivity/auth error). urllib wraps the ssl error in URLError.reason.
+
+    We match ssl.SSLCertVerificationError specifically (not any ssl.SSLError) — the two
+    scenarios this targets (empty CA bundle, corporate proxy root) raise exactly that,
+    while other SSLErrors (protocol mismatch, handshake EOF) are NOT trust problems and
+    shouldn't send the user to run Install Certificates.command."""
+    return (isinstance(e, ssl.SSLCertVerificationError)
+            or isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError))
 
 
 def _ssl_context() -> Optional[ssl.SSLContext]:
@@ -285,7 +297,9 @@ def resolve_org_id(user: str, pw: str) -> Optional[str]:
             orgs = json.load(r).get("organizations", [])
     except Exception as e:
         if _is_tls_trust_error(e):
-            log(f"org lookup failed ({url}): {TLS_TRUST_HINT}")
+            global _TLS_TRUST_FAILURE
+            _TLS_TRUST_FAILURE = True
+            log(f"org lookup failed ({url}): {e} — {TLS_TRUST_HINT}")
         else:
             log(f"org lookup failed ({url}): {e} — set SNAPLOGIC_ORG_ID directly to skip lookup.")
         return None
@@ -332,7 +346,9 @@ def fetch_index_url() -> Optional[str]:
             body = json.load(r)
     except Exception as e:
         if _is_tls_trust_error(e):
-            log(f"installer request failed ({url}): {TLS_TRUST_HINT}")
+            global _TLS_TRUST_FAILURE
+            _TLS_TRUST_FAILURE = True
+            log(f"installer request failed ({url}): {e} — {TLS_TRUST_HINT}")
         else:
             log(f"installer request failed ({url}): {e}")
         return None
@@ -404,6 +420,14 @@ def main() -> int:
         log(f"done. slpy ready at {SLPY_EXE}")
         note = "⏳ SnapCode: first-time setup done — the slpy CLI is installed and ready."
         emit_to_user((welcome + "\n\n" + note).strip() if welcome else note)
+        return 0
+
+    # If the install failed because an HTTPS call couldn't verify certificates, say THAT —
+    # the generic "credentials missing" message would send the user to chase config that's
+    # already correct (the exact failure mode this PR exists to kill).
+    if _TLS_TRUST_FAILURE:
+        log(f"slpy not installed: {TLS_TRUST_HINT}")
+        emit_to_user(welcome, "SnapCode: could not install the slpy CLI — " + TLS_TRUST_HINT)
         return 0
 
     log("slpy not installed: installer endpoint unreachable or credentials missing. "
