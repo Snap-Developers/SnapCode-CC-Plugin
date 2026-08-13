@@ -37,6 +37,7 @@ Design notes:
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import time
@@ -199,6 +200,63 @@ def _request_headers(user: str, pw: str) -> dict:
     }
 
 
+# What to tell the user when an HTTPS call fails TLS verification (as opposed to a real
+# credentials/URL problem). Both onboarding failures we've seen (2026-08) were this: a
+# python.org macOS Python whose CA bundle was never populated, mis-reported as a
+# "credentials missing" error and sending people to chase config that was already correct.
+TLS_TRUST_HINT = (
+    "this is a TLS trust problem, NOT a credentials/URL problem — your Python has no "
+    "usable CA trust store (common on python.org macOS builds where the bundled "
+    "'Install Certificates.command' was never run), or a corporate proxy presents a "
+    "custom root CA your Python can't see. Fix: run \"/Applications/Python 3.x/Install "
+    "Certificates.command\" (macOS python.org build), or point Python at a CA bundle, e.g. "
+    "export SSL_CERT_FILE=\"$(python3 -c 'import certifi; print(certifi.where())')\". "
+    "See SnapCode setup docs."
+)
+
+
+def _is_tls_trust_error(e: Exception) -> bool:
+    """True if a urlopen failure was a TLS certificate-verification failure (vs. a real
+    connectivity/auth error). urllib wraps the ssl error in URLError.reason."""
+    return isinstance(e, ssl.SSLError) or isinstance(getattr(e, "reason", None), ssl.SSLError)
+
+
+def _ssl_context() -> Optional[ssl.SSLContext]:
+    """Build the SSL context for bootstrap's own HTTPS calls, tolerating a broken/empty
+    default trust store.
+
+    bootstrap runs on the user's own Python — BEFORE slpy's venv exists — so the default
+    SSL context is whatever that bare interpreter ships. Two common breakages:
+      • python.org macOS builds where "Install Certificates.command" was never run have an
+        EMPTY OpenSSL cert bundle → every HTTPS call fails CERTIFICATE_VERIFY_FAILED.
+      • a corporate SSL-inspection proxy presents a custom root CA that lives only in the
+        OS trust store, which Python's default context doesn't read.
+
+    Prefer, in order:
+      1. truststore — use the OS native trust store (macOS Keychain / Windows cert store /
+         Linux CA bundle). Covers BOTH cases above. Used only if importable.
+      2. certifi's CA bundle — public roots; covers the empty-bundle case. If importable.
+      3. None — Python's default context (today's behaviour; no regression).
+
+    NOTE: this only affects the context object we build in-process for our own requests —
+    it does NOT modify the user's machine (no cert.pem written, no env changed). And it
+    NEVER disables verification: every branch still verifies certs, just against a valid
+    trust source. truststore/certifi may be absent in the bare interpreter; when neither
+    imports we fall through to the default and rely on the TLS_TRUST_HINT to guide the fix.
+    """
+    try:
+        import truststore
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:
+        pass
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    return None
+
+
 def resolve_org_id(user: str, pw: str) -> Optional[str]:
     """Resolve org ID from SNAPLOGIC_ORG_ID (direct) or SNAPLOGIC_ORG_NAME (lookup).
 
@@ -223,10 +281,13 @@ def resolve_org_id(user: str, pw: str) -> Optional[str]:
     url = f"{SNAPLOGIC_BASE_URL}/api/1/rest/public/users/{urllib.parse.quote(user, safe='')}"
     req = urllib.request.Request(url, headers=_request_headers(user, pw))
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as r:
             orgs = json.load(r).get("organizations", [])
     except Exception as e:
-        log(f"org lookup failed ({url}): {e} — set SNAPLOGIC_ORG_ID directly to skip lookup.")
+        if _is_tls_trust_error(e):
+            log(f"org lookup failed ({url}): {TLS_TRUST_HINT}")
+        else:
+            log(f"org lookup failed ({url}): {e} — set SNAPLOGIC_ORG_ID directly to skip lookup.")
         return None
 
     matches = [o for o in orgs if o.get("name", "").lower() == SNAPLOGIC_ORG_NAME.lower()]
@@ -267,10 +328,13 @@ def fetch_index_url() -> Optional[str]:
     url = f"{SNAPLOGIC_BASE_URL}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer"
     req = urllib.request.Request(url, method="GET", headers=_request_headers(user, pw))
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=20, context=_ssl_context()) as r:
             body = json.load(r)
     except Exception as e:
-        log(f"installer request failed ({url}): {e}")
+        if _is_tls_trust_error(e):
+            log(f"installer request failed ({url}): {TLS_TRUST_HINT}")
+        else:
+            log(f"installer request failed ({url}): {e}")
         return None
     # Response shape: {"response_map": [{"index_url": ...}]} (list). Fall back to flat shape.
     rmap = body.get("response_map")
