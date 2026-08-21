@@ -201,8 +201,9 @@ Before starting, assess complexity and choose the appropriate workflow pattern:
 1. `pygen_query_pipeline_examples("combined intent")`
 2. `pygen_validate_snap_names([snaps], do_get_parameters=True)`
 3. `pygen_get_snap_documentation([connectivity_snaps_only])`
-4. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
-5. If pipeline has transform/flow snaps: `slpy exec X.py` (or test segment if some snaps unsupported)
+4. If any snap needs an account: `list_accounts(org, project_path)` to discover + bind it (see Rule 10)
+5. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
+6. If pipeline has transform/flow snaps: `slpy exec X.py` (or test segment if some snaps unsupported)
 
 #### Pattern 1: Simple Pipeline (Target: 5-6 calls)
 **Use for:** Standard ETL with known snaps
@@ -216,8 +217,9 @@ Before starting, assess complexity and choose the appropriate workflow pattern:
 3. `pygen_validate_connections(skeleton_slpy)` — validate snap names + connection type compatibility
 4. `pygen_get_snap_documentation([connectivity_snaps_only])`
 5. `pygen_get_snap_parameters([connectivity_snaps_only])`
-6. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
-7. Execute: `slpy exec X.py` directly, or create test segment `X_test.py` if some snaps unsupported
+6. If any snap needs an account: `list_accounts(org, project_path)` to discover + bind it (see Rule 10)
+7. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
+8. Execute: `slpy exec X.py` directly, or create test segment `X_test.py` if some snaps unsupported
 
 #### Pattern 2: Complex Pipeline (Target: 6-8 calls)
 **Use for:** Advanced integration scenarios
@@ -233,8 +235,9 @@ Before starting, assess complexity and choose the appropriate workflow pattern:
 4. `pygen_validate_connections(skeleton_slpy)` — validate snap names + connection type compatibility
 5. `pygen_get_snap_documentation([connectivity_snaps_only])`
 6. `pygen_get_snap_parameters([connectivity_snaps_only])`
-7. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
-8. Execute: `slpy exec X.py`, or create test segment `X_test.py` replacing non-executable snaps with file I/O, then `slpy exec X_test.py`
+7. If any snap needs an account: `list_accounts(org, project_path)` to discover + bind it (see Rule 10)
+8. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
+9. Execute: `slpy exec X.py`, or create test segment `X_test.py` replacing non-executable snaps with file I/O, then `slpy exec X_test.py`
 
 #### Pattern 3: Refinement (Target: 1-3 calls)
 **Use for:** Updating existing pipelines
@@ -1281,6 +1284,35 @@ p.connect(src=OPEN_VIEW.INPUT, dst=snap_0, src_view_id="INPUT", dst_view_id="inp
 
 **Best Practice:** Start pipelines with Reader snaps (no input) unless dynamic behavior requires upstream data.
 
+### Rule 6.5: Terminal Snap Needs an Open Output View (execute fails without it)
+
+A snap at the **end of the pipeline** (nothing connected downstream from its output view) must be given an explicit open output view, or the platform aborts it at execution with:
+
+```
+No outbound view found for the snap
+Snap failed unexpectedly and did not provide any reason
+```
+
+This bites when the last snap is a transform/sink that produces output but you didn't wire it anywhere (e.g. a final `TransformMapper` you added just to inspect data, or any pipeline whose tail snap has no downstream). `slpy translate` passes fine — the failure only shows at `execute`/`validate` on the platform, and the terminal snap's output view comes out empty (`{}`) in the generated `.slp`.
+
+**Fix — connect the terminal snap's output to `OPEN_VIEW.OUTPUT`:**
+
+```python
+from slpy.modules.Pipeline.utils import Expr, OPEN_VIEW
+
+# ... snap_1 is the last snap in the pipeline ...
+p.connect(
+    src=snap_1, dst=OPEN_VIEW.OUTPUT,
+    src_view_id="output0", dst_view_id="output0",
+    src_output_type="document", dst_input_type="document"
+)
+```
+
+**Gotchas:**
+- `OPEN_VIEW` cannot be used bare — slpy errors with `Bare 'OPEN_VIEW' is not valid — use OPEN_VIEW.INPUT or OPEN_VIEW.OUTPUT`. Always use `OPEN_VIEW.OUTPUT` (or `.INPUT`).
+- This is only needed for a **terminal** snap that has no downstream connection. Snaps that already feed another snap don't need it. A pipeline whose tail is a real sink (`BinaryFileWriter`, a DB writer, etc.) also doesn't need it — the sink is the terminus.
+- `No outbound view found` at execute ≠ a config/account problem. If the snap itself validated clean, this is the wiring cause — add the open output view, don't re-chase the snap's settings.
+
 ### Rule 7: Expression Library Restrictions
 
 Expression libraries (.expr files) contain reusable functions and constants referenced in pipelines via the `lib` global. They have STRICT syntax restrictions — see §9 for the complete canonical list and validation checklist.
@@ -1430,8 +1462,8 @@ snap_0 = APISuiteHTTPClient(
     label='Call API', http_method='POST', uri='https://example.com',
     pm_account=Account(
         ref_class_id='com-snaplogic-snaps-apisuite-accounts-headerauthaccount',
-        label='my-account',
-        ref_id='...'
+        label='my-account'
+        # no ref_id on a new binding — the platform resolves it on import once `label` locates the account (see below)
     )
 )
 
@@ -1443,11 +1475,59 @@ snap_0 = APISuiteHTTPClient(
 )
 ```
 
+**Creating a new binding — Discover → Pick → Bind by relative-path label:**
+
+Do this when generating a snap that needs an account — don't leave it for the user to fix in the UI afterward:
+
+1. **Discover** — call `list_accounts(org, project_path)` to list accounts. Each entry has `label`, `path` (e.g. `snaplogic/shared/<name>`), `snode_id`, and `class_id`/`class_label` (the account type). If the user doesn't know the org, call `list_organizations` first. Accounts may live in `shared` AND the pipeline's own project — check both paths.
+2. **Pick** — filter by `class_id` to the accounts that fit the snap, then choose one (present labels to the user if ambiguous). Match by `class_id` substring: HTTP Client → `apisuite-accounts`; MySQL → `mysqldatabaseaccount`; OpenAI/Bedrock LLM → `openai`/`bedrock`; etc. If no account of the needed class exists, see "No matching account exists yet" below.
+3. **Bind by relative-path label** — set `label` to the path from the pipeline's project to the account, and give `ref_class_id`. Do NOT set `ref_id`.
+
+```python
+# CORRECT — verified e2e. Imports with a working account, no manual UI step.
+# Pipeline lives in Arbie/snapcode; account lives in shared → label is the RELATIVE path.
+snap_0 = APISuiteHTTPClient(
+    label='GET with Basic Auth',
+    http_method='GET',
+    uri='https://api.example.com/data',
+    pm_account=APISuiteHTTPClient.Account(
+        ref_class_id='com-snaplogic-snaps-apisuite-accounts-basicauthaccount',
+        label='../shared/STU_5155_test_account'   # relative path from the pipeline's project to the account
+        # no ref_id — the platform resolves it on import when the label locates the account
+    )
+)
+
+# WRONG — bare account name. The platform looks under the pipeline's own project,
+# doesn't find it (account is in shared), and CLEARS the whole account_ref on import.
+label='REST basic auth account - admin@snaplogic.com'
+```
+
+- Compute the relative path from `list_accounts` data: the account's `path` is `snaplogic/shared/<name>`; the pipeline's project is `snaplogic/Arbie/snapcode`; so the label is `../shared/<name>`. (For an account in the SAME project as the pipeline, a bare name resolves fine.)
+- **Do NOT put `snode_id` in `ref_id`.** `list_accounts` returns a `snode_id`, but putting it in `ref_id` was observed to make the platform reject the ref and clear the whole `account_ref` on import. Leave `ref_id` empty instead — the label is what the platform resolves against. (Verified by reading the platform-stored `.slp` back: with a correct relative-path label and empty `ref_id`, the binding survives and `ref_id` comes back filled in; with `snode_id` in `ref_id`, it came back as `{}`.)
+- Only bind an account for snaps that actually require one. Leave `pm_account` unset for snaps with no credentials (parsers, formatters, mappers, file readers on local paths).
+- Verify (optional): after import + execute, re-read the platform-stored pipeline (the execute response's `export_link` returns a ZIP with the stored `.slp`) and confirm `account_ref.value.ref_id` is a non-empty `art:...` rather than `{}`.
+
+**No matching account exists yet — hand off to `sl account create`, never ask for secrets directly:**
+
+SnapCode cannot create account assets itself (see deploy-skill limitations). If `list_accounts` finds nothing of the needed `class_id` (or the user explicitly says "create an account"), do **not** ask the user to paste credentials into the conversation — that puts secrets in the LLM's context/transcript, which is exactly what this flow exists to avoid. Instead, hand off to the `sl` CLI, which the user runs themselves in their own terminal:
+
+1. **If the class_id isn't already known**, run `sl account types <keyword>` (e.g. `sl account types google`) and present the matches — there are 135+ snap packs, so always filter by keyword, never dump the full unfiltered list on the user.
+2. **Tell the user to run** `sl account create --class-id <class_id>` **themselves**, in their own terminal. Pass `--org`/`--path`/`--label` defaults if already known, to save typing — but never the credential values themselves; the assistant never sees or asks for those.
+3. **Wait for the user to confirm** the CLI printed `Account '<label>' created successfully`, then proceed to bind it (Discover → Pick → Bind, above) using the label/path they just created.
+4. **Generate a minimal verification pipeline** using the new account — a single snap of the relevant type, wired straight to `OPEN_VIEW.OUTPUT` (see Rule 6.5), translated + imported as usual.
+5. **Verify in Designer, not locally** — many account-gated snaps (LLM/Bedrock Converse API, OAuth-flow snaps) are not `slpy exec`-supported, so there is no way to confirm the binding + live call succeed without importing and executing on the platform. Confirm `account_ref.ref_id` resolved to a real value (not `{}`) and that execute actually returns data, not just that translate succeeded.
+
+Two account shapes behave differently at the CLI prompt — know which one you're dealing with before telling the user what to expect:
+
+| Shape | Example | Field-collection behavior |
+|---|---|---|
+| Direct credential | AWS Bedrock, most database accounts | Prompts for required fields (access key, secret, region, ...); an "advanced settings" prompt for fields with a platform default (safe to skip, defaults apply) |
+| OAuth2 | Google Sheets/BigQuery/etc. OAuth2 accounts | Field set includes token/scope-shaped values with no platform default — don't assume it matches a direct-credential class's fields; walk through whatever the schema actually asks for |
+
 **Preservation rules when editing an existing pipeline:**
 - **NEVER remove, rewrite, or "simplify" a `pm_account=Expr('lib.env.*')` binding** unless the user explicitly asks to change the account. It is a deliberate environment-independence mechanism, not a label — replacing it with a static account (or dropping it) breaks the pipeline in every other environment.
 - Leave `pm_account` exactly as found on snaps whose accounts you weren't asked to touch.
 - **NEVER pass a bare string** (`pm_account="lib.env.acct"`) — the parser silently produces an empty account binding. Use `Expr(...)` for expression refs or `Account(...)` for static refs.
-- SnapCode cannot create account assets; a static `Account(...)` must reference one that already exists on the platform (see deploy-skill limitations).
 
 ### Never Guess — Consult Tools
 
