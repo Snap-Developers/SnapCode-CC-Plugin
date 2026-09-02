@@ -1,6 +1,6 @@
 {
   "name": "snapcode",
   "description": "SnapLogic SnapCode — skills, cloud MCP, and the slpy CLI auto-installed.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": { "name": "SnapLogic SnapCode" }
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""MCP auth helper — emits the Authorization header for the cloud MCP.
+"""MCP request headers for the cloud MCP: Authorization, plus the tool profile
+that identifies this client to the platform.
 
 Claude Code runs this via the `.mcp.json` `headersHelper` on every (re)connect and
 merges its stdout JSON into the request headers. This is what stops Claude Code from
@@ -28,17 +29,60 @@ import base64
 import json
 import os
 import sys
+from urllib.parse import urlsplit
+
+
+CRED_FILE = os.path.expanduser("~/.claude/snapcode/credentials")
+
+
+def _same_host(a: str, b: str) -> bool:
+    try:
+        return urlsplit(a).netloc.lower() == urlsplit(b).netloc.lower()
+    except ValueError:
+        return False
+
+
+def _creds():
+    """Basic-auth creds: env first (back-compat), then the file bootstrap writes.
+
+    Claude Code >=2.1.238 strips credential-named env vars (SNAPLOGIC_API_PASS)
+    from a plugin's headersHelper, so on current Claude Code the env path yields
+    no password and we fall through to the file the SessionStart hook wrote.
+    """
+    user, pw = os.environ.get("SNAPLOGIC_API_USER"), os.environ.get("SNAPLOGIC_API_PASS")
+    if user and pw:
+        return user, pw
+    try:
+        with open(CRED_FILE) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(d, dict):  # valid JSON that isn't an object would crash d.get
+        return None, None
+    # The file is machine-global but a session is per-pod: refuse creds another
+    # session wrote for a different host rather than sending them there. Fail open
+    # when either side is unknown (older Claude Code, or a file without base_url).
+    want = os.environ.get("CLAUDE_CODE_MCP_SERVER_URL", "")
+    have = d.get("base_url") or ""
+    if want and have and not _same_host(want, have):
+        return None, None
+    return d.get("user"), d.get("pass")
 
 
 def main() -> int:
-    env = os.environ
-    user, pw = env.get("SNAPLOGIC_API_USER"), env.get("SNAPLOGIC_API_PASS")
+    # Identify this client to the platform MCP server. The value must be exactly one
+    # of its known profiles: resolve_profile_name() lowercases the header and falls
+    # back to the (broader) server default on anything it does not recognise, so no
+    # version suffix here. Selecting "snapcode" also scopes the tools we are served
+    # to the platform + pygen + common set.
+    headers = {"X-MCP-Tool-Profile": "snapcode"}
+    user, pw = _creds()
     if user and pw:
         b = base64.b64encode(f"{user}:{pw}".encode()).decode()
-        print(json.dumps({"Authorization": f"Basic {b}"}))
-    else:
-        # No creds set — emit empty object so Claude Code sends no auth (still no OAuth).
-        print("{}")
+        headers["Authorization"] = f"Basic {b}"
+    # With no creds we still emit the profile but no Authorization, so Claude Code
+    # sends no auth (and still does not attempt OAuth).
+    print(json.dumps(headers))
     return 0
 
 

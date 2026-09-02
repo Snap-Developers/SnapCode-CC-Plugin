@@ -96,8 +96,8 @@ a PowerShell variable/escape (if the password contains a single quote, double it
 
 Windows has no `source` equivalent: after `SetEnvironmentVariable`, the **current** window
 won't see the values — **open a new terminal** (and restart Claude Code / your editor,
-since child processes inherit the environment at launch). Verify with
-`[Environment]::GetEnvironmentVariable("SNAPLOGIC_ORG_NAME", "User")`.
+since child processes inherit the environment at launch). Verify in the new terminal with
+`echo $env:SNAPLOGIC_BASE_URL`.
 
 ## 3. Install the plugin
 
@@ -122,7 +122,9 @@ On every session the plugin:
 - has the `slpy` CLI ready.
 
 To connect, an auth helper that ships inside the plugin authenticates to the SnapLogic MCP
-server with your credentials (no install step, so it's ready on the **first** session). The
+server with your credentials (the SessionStart hook writes them to a file the helper reads, so
+on a brand-new install the very first connection can race the hook — reconnect the MCP server
+or start a new session if it shows as not connected). The
 `slpy` CLI is installed on the first session by the SessionStart bootstrap; if you happen to
 run `slpy` before that finishes, the launcher installs it on demand. If the MCP server shows
 as not connected, see Troubleshooting below (usually a credential or variable-name issue).
@@ -179,10 +181,12 @@ is the installed `slpy`, which can be large):
 macOS / Linux:
 ```bash
 rm -rf ~/.claude/plugins/cache/snapcode
+rm -f ~/.claude/snapcode/credentials   # the auth helper's copy of your credentials
 ```
 Windows (PowerShell):
 ```powershell
 Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\plugins\cache\snapcode"
+Remove-Item -Force "$env:USERPROFILE\.claude\snapcode\credentials"   # the auth helper's copy of your credentials
 ```
 
 If you set the `SNAPLOGIC_*` env vars (step 2) and no longer want them:
@@ -190,38 +194,13 @@ If you set the `SNAPLOGIC_*` env vars (step 2) and no longer want them:
 - Windows PowerShell: clear each User-level var, e.g.
   `[Environment]::SetEnvironmentVariable('SNAPLOGIC_API_USER', $null, 'User')` (repeat per variable).
 
-## Migrating from the old install (clone + Docker)
-
-If you previously used the old SnapCode distribution (cloned the repo, ran the Docker
-image, installed slpy/MCP globally), remove those first — they **conflict** with the
-plugin:
-
-Remove the old user-scope `snaplogic` MCP and the old `slpy` shim on PATH.
-
-macOS / Linux:
-```bash
-claude mcp remove snaplogic
-rm ~/.local/bin/slpy
-```
-Windows (PowerShell):
-```powershell
-claude mcp remove snaplogic
-Remove-Item "$env:USERPROFILE\.local\bin\slpy*"
-```
-
-> **Note:** If you skip this, you'll have two SnapLogic MCPs registered — the old `snaplogic`
-> and the plugin's `snapcode:snaplogic`. They don't share a name, but keeping both is redundant
-> and confusing, and `which slpy` may still resolve to the old dev symlink instead of the
-> plugin's. After removing both old bits, install the plugin per step 3.
-
 ## Troubleshooting
 
 | Symptom | Cause & fix |
 |---|---|
 | **MCP shows "not authenticated" / 401** | Credentials missing or wrong, or set in a different shell than the one running Claude Code. Re-check step 2 and restart Claude Code. |
-| **MCP shows a 404 / OAuth error** | No `Authorization` header reached the server, so it fell back to OAuth discovery (which 404s here). The header comes from the auth helper (`bin/mcp_headers.py`). Confirm your credentials are set in the current environment, then run the helper by hand in the same shell to check — macOS/Linux/Git-Bash: `python3 ~/.claude/plugins/cache/snapcode/*/*/bin/mcp_headers.py` · Windows PowerShell: `python (Get-ChildItem "$env:USERPROFILE\.claude\plugins\cache\snapcode\*\*\bin\mcp_headers.py").FullName`. If it prints `{"Authorization": "Basic ..."}` your creds are read; if it prints `{}`, `SNAPLOGIC_API_USER`/`SNAPLOGIC_API_PASS` aren't set in this shell. |
+| **MCP shows a 404 / OAuth error** | No `Authorization` header reached the server, so it fell back to OAuth discovery (which 404s here). The header comes from the auth helper (`bin/mcp_headers.py`). Confirm your credentials are set in the current environment, then run the helper by hand in the same shell to check — macOS/Linux/Git-Bash: `python3 ~/.claude/plugins/cache/snapcode/*/*/bin/mcp_headers.py` · Windows PowerShell: `python (Get-ChildItem "$env:USERPROFILE\.claude\plugins\cache\snapcode\*\*\bin\mcp_headers.py").FullName`. If it prints `{"Authorization": "Basic ..."}` your creds are read (from the environment, or from `~/.claude/snapcode/credentials` which the SessionStart hook writes); if it prints `{}`, neither source has them — check `SNAPLOGIC_API_USER`/`SNAPLOGIC_API_PASS` are set, then restart Claude Code so the hook rewrites the file. |
 | **Installer unreachable / org lookup fails / "credentials missing"** | Check the variable **name** is spelled exactly `SNAPLOGIC_ORG_NAME` — a misspelled name is silently ignored, so the org can't resolve and the slpy install fails. Fix the name, open a new terminal, restart. |
 | **`CERTIFICATE_VERIFY_FAILED` / TLS certificate error during install** | Your Python has no usable CA trust store — common on **python.org macOS builds** where the bundled *Install Certificates.command* was never run (or a corporate proxy presents a custom root CA your Python can't see). The plugin now auto-recovers when `truststore`/`certifi` are importable; if it still fails, fix your Python's trust store: run `"/Applications/Python 3.x/Install Certificates.command"` (python.org build), **or** add `export SSL_CERT_FILE="$(python3 -c 'import certifi; print(certifi.where())')"` to your shell profile — then open a new terminal and restart Claude Code. |
 | **`slpy` not found / not installed** | The bootstrap installs it on the first session (and the launcher installs it on demand). If it's still missing, start a fresh session. If your pod is behind a proxy/firewall, the installer call must be able to reach the SLServer endpoint on your pod. |
 | **`ENOENT: Bun could not find a file`** on `plugin marketplace add` / `install` | Usually a stale `CLAUDE_CONFIG_DIR` pointing at a directory that no longer exists. Check and clear it, then retry — macOS/Linux: `echo $CLAUDE_CONFIG_DIR` then `unset CLAUDE_CONFIG_DIR` · Windows PowerShell: `$env:CLAUDE_CONFIG_DIR` then `Remove-Item Env:\CLAUDE_CONFIG_DIR`. |
-| **Used the old SnapCode repo before?** | The old distribution registered a user-scope MCP named `snaplogic`. The plugin adds its own (`snapcode:snaplogic`) — they don't share a name, but keeping both is redundant and confusing. Remove the old one: `claude mcp remove snaplogic` (run `claude mcp list` to see what's registered). |

@@ -13,7 +13,7 @@ Cross-platform (macOS + Windows). Users need no GitHub or AWS account.
 | `.mcp.json` | Cloud MCP registration (`snaplogic`, HTTP) — no local MCP, no container |
 | `hooks/hooks.json` | `SessionStart` hook (needs a `matcher` to fire) that runs the bootstrap |
 | `bin/bootstrap.py` | Ensures `uv`, fetches the installer URL, installs slpy into the persistent data dir |
-| `bin/mcp_headers.py` | MCP auth helper — emits the `Authorization` header from env credentials |
+| `bin/mcp_headers.py` | MCP auth helper — emits the `Authorization` header from your credentials (env, or the file the bootstrap writes) |
 | `bin/slpy`, `bin/slpy.cmd` | `slpy` launcher on PATH → forwards to the installed slpy |
 
 ## How slpy is installed (bootstrap)

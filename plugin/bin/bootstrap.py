@@ -17,10 +17,11 @@ Update cadence: slpy publishes very frequently, so we DON'T check every session.
 at most once per TTL window (default 24h). Between checks, an already-installed slpy is
 used as-is — no installer call, no network. Channel: develop (newest) for now.
 
-MCP auth: handled separately and needs no setup here — .mcp.json points headersHelper
-straight at ${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py, which runs in place from the
-plugin. The helper reads the user's SnapLogic credentials from their ENVIRONMENT; this
-script never handles credentials or reads a repo .env.
+MCP auth: .mcp.json points headersHelper straight at ${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py,
+which runs in place from the plugin. Claude Code >=2.1.238 no longer passes credential-named
+env vars (SNAPLOGIC_API_PASS) to a plugin's headersHelper, so on SessionStart we mirror the
+credentials from the environment (still available to this hook) into a file the helper reads;
+see write_credentials(). We never read a repo .env.
 
 Design notes:
   - Invoked from the SessionStart hook as `python3 "${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.py"`.
@@ -40,12 +41,52 @@ import shutil
 import ssl
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", Path(__file__).resolve().parent.parent))
+
+# Credential relay: Claude Code >=2.1.238 strips credential-named env vars from the
+# plugin's headersHelper (but NOT from this SessionStart hook), so the MCP helper can
+# no longer read SNAPLOGIC_API_PASS from the environment. We capture it here, where it
+# is still present, and write it to a fixed file the helper reads. Path is computed
+# without any env var so the hook and the helper always agree on it.
+CRED_FILE = Path(os.path.expanduser("~/.claude/snapcode/credentials"))
+
+
+def write_credentials() -> None:
+    """Mirror Basic-auth creds from env to CRED_FILE for the MCP headersHelper.
+
+    No-op when env creds are absent, so it never clobbers a file managed elsewhere
+    (e.g. a future `sl auth login`). Each session writes a uniquely named temp file
+    (0600 on POSIX) and renames it into place, so two sessions starting at once
+    cannot splice their writes together. `base_url` pins the credentials to one pod
+    so the helper can refuse to send them to a session pointed at a different pod.
+    """
+    user = os.environ.get("SNAPLOGIC_API_USER")
+    pw = os.environ.get("SNAPLOGIC_API_PASS")
+    if not (user and pw):
+        return
+    payload = {"user": user, "pass": pw, "base_url": SNAPLOGIC_BASE_URL, "source": "env"}
+    tmp = None
+    try:
+        CRED_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd, tmp = tempfile.mkstemp(dir=str(CRED_FILE.parent), prefix=".credentials.")
+        with os.fdopen(fd, "w") as f:  # mkstemp created it 0600 on POSIX
+            f.write(json.dumps(payload))
+        os.replace(tmp, CRED_FILE)  # atomic
+        tmp = None
+    except Exception as e:  # never hard-fail the session
+        log(f"could not write credential file: {e}")
+    finally:
+        if tmp:  # replace failed — don't leave the password in a stray temp file
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def _plugin_data_dir() -> Path:
@@ -72,6 +113,11 @@ PLUGIN_DATA = _plugin_data_dir()
 TOOL_DIR = PLUGIN_DATA / "tools"        # where uv installs slpy
 BIN_DIR = PLUGIN_DATA / "bin"           # where the slpy executable lands
 LAST_CHECK = PLUGIN_DATA / "last_check"  # timestamp of last broker/index check
+
+# Interpreter for slpy's venv (not the one running this script). Unpinned, uv picks the
+# newest it finds, which breaks when slpy's deps have no wheels for it. 3.12 is what
+# SnapGPT runs on, so it is the best-tested option here.
+SLPY_PYTHON = ">=3.12,<3.13"
 
 # The installer endpoint lives on the SnapLogic SLServer:
 #   {base_url}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer
@@ -361,8 +407,17 @@ def fetch_index_url() -> Optional[str]:
     return body.get("index_url")
 
 
-def install_slpy_from_index(uv: str, index_url: str) -> bool:
-    """Install/update slpy from the private index. Token is passed via ENV, not argv."""
+def _tail(text: str, limit: int = 6) -> str:
+    """Last few non-blank lines of uv's output — enough to name the real failure."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    return "\n".join(lines[-limit:])
+
+
+def install_slpy_from_index(uv: str, index_url: str) -> Tuple[bool, str]:
+    """Install/update slpy from the private index. Token is passed via ENV, not argv.
+
+    Returns (ok, detail); on failure `detail` is uv's own error text.
+    """
     PLUGIN_DATA.mkdir(parents=True, exist_ok=True)
     # Pass the token-bearing index URL through the environment so it never appears on
     # the command line (shell history / ps). uv reads UV_DEFAULT_INDEX.
@@ -376,22 +431,36 @@ def install_slpy_from_index(uv: str, index_url: str) -> bool:
         #   behind a corporate SSL-inspection proxy with a custom root CA. Without it,
         #   uv's bundled TLS stack rejects the connection (UnknownIssuer) and never
         #   reaches our index. NOTE: the var is UV_NATIVE_TLS — uv has NO UV_SYSTEM_CERTS.
+        # --python: see SLPY_PYTHON above.
         # --no-build-package slpy: our slpy is a pre-built wheel on the private index.
         #   If resolution ever falls through to public PyPI (where "slpy" is an
         #   unrelated 3rd-party package), forbid building it from source so the install
         #   fails loudly instead of silently compiling a foreign package.
+        # capture_output: uv's stdout would otherwise mix into this hook's JSON result,
+        #   and we need the error text to show the user.
         subprocess.run([uv, "tool", "install", "--force", "--native-tls",
-                        "--no-build-package", "slpy", "slpy"], env=env, check=True)
+                        "--python", SLPY_PYTHON,
+                        "--no-build-package", "slpy", "slpy"],
+                       env=env, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        log(f"slpy install failed: {e}")
-        return False
-    return True
+        detail = _tail(e.stderr) or _tail(e.stdout) or f"uv exited with status {e.returncode}"
+        log(f"slpy install failed:\n{detail}")
+        return False, detail
+    except OSError as e:
+        # A stale uv path from ensure_uv() lands here; without this the hook dies with a
+        # traceback instead of exiting cleanly.
+        detail = f"could not run uv ({e})"
+        log(f"slpy install failed: {detail}")
+        return False, detail
+    return True, ""
 
 
 # ── main ───────────────────────────────────────────────────────────────────--
 def main() -> int:
-    # MCP auth no longer needs setup here — .mcp.json points headersHelper straight at
-    # ${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py, which exists at install time.
+    # Relay Basic-auth creds to a file the MCP headersHelper can read (Claude Code
+    # >=2.1.238 no longer passes credential env vars to the plugin's headersHelper).
+    # First, so it runs even when the slpy check below short-circuits on its TTL.
+    write_credentials()
     #
     # We collect a single user-facing message and emit it once at the end (a hook can
     # only emit one JSON result). Two independent parts:
@@ -415,12 +484,15 @@ def main() -> int:
     # Install/update slpy from the private index via the SLServer installer endpoint.
     # This can take ~20s on first run (downloads the toolchain), so tell the user.
     index_url = fetch_index_url()
-    if index_url and install_slpy_from_index(uv, index_url):
-        mark_checked()
-        log(f"done. slpy ready at {SLPY_EXE}")
-        note = "⏳ SnapCode: first-time setup done — the slpy CLI is installed and ready."
-        emit_to_user((welcome + "\n\n" + note).strip() if welcome else note)
-        return 0
+    install_error = ""
+    if index_url:
+        ok, install_error = install_slpy_from_index(uv, index_url)
+        if ok:
+            mark_checked()
+            log(f"done. slpy ready at {SLPY_EXE}")
+            note = "⏳ SnapCode: first-time setup done — the slpy CLI is installed and ready."
+            emit_to_user((welcome + "\n\n" + note).strip() if welcome else note)
+            return 0
 
     # If the install failed because an HTTPS call couldn't verify certificates, say THAT —
     # the generic "credentials missing" message would send the user to chase config that's
@@ -428,6 +500,14 @@ def main() -> int:
     if _TLS_TRUST_FAILURE:
         log(f"slpy not installed: {TLS_TRUST_HINT}")
         emit_to_user(welcome, "SnapCode: could not install the slpy CLI — " + TLS_TRUST_HINT)
+        return 0
+
+    # We got an index URL and uv still failed, so credentials are fine and blaming them
+    # would send the user down the wrong path. Show what uv actually said.
+    if install_error:
+        emit_to_user(welcome, "SnapCode: could not install the slpy CLI. This is not a "
+                              "credentials problem — the installer was reached. uv reported:"
+                              f"\n\n```\n{install_error}\n```")
         return 0
 
     log("slpy not installed: installer endpoint unreachable or credentials missing. "

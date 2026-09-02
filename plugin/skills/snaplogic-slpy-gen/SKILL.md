@@ -201,8 +201,9 @@ Before starting, assess complexity and choose the appropriate workflow pattern:
 1. `pygen_query_pipeline_examples("combined intent")`
 2. `pygen_validate_snap_names([snaps], do_get_parameters=True)`
 3. `pygen_get_snap_documentation([connectivity_snaps_only])`
-4. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
-5. If pipeline has transform/flow snaps: `slpy exec X.py` (or test segment if some snaps unsupported)
+4. If any snap needs an account: `list_accounts(org, project_path)` to discover + bind it (see Rule 10)
+5. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
+6. If pipeline has transform/flow snaps: `slpy exec X.py` (or test segment if some snaps unsupported)
 
 #### Pattern 1: Simple Pipeline (Target: 5-6 calls)
 **Use for:** Standard ETL with known snaps
@@ -216,8 +217,9 @@ Before starting, assess complexity and choose the appropriate workflow pattern:
 3. `pygen_validate_connections(skeleton_slpy)` — validate snap names + connection type compatibility
 4. `pygen_get_snap_documentation([connectivity_snaps_only])`
 5. `pygen_get_snap_parameters([connectivity_snaps_only])`
-6. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
-7. Execute: `slpy exec X.py` directly, or create test segment `X_test.py` if some snaps unsupported
+6. If any snap needs an account: `list_accounts(org, project_path)` to discover + bind it (see Rule 10)
+7. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
+8. Execute: `slpy exec X.py` directly, or create test segment `X_test.py` if some snaps unsupported
 
 #### Pattern 2: Complex Pipeline (Target: 6-8 calls)
 **Use for:** Advanced integration scenarios
@@ -233,8 +235,9 @@ Before starting, assess complexity and choose the appropriate workflow pattern:
 4. `pygen_validate_connections(skeleton_slpy)` — validate snap names + connection type compatibility
 5. `pygen_get_snap_documentation([connectivity_snaps_only])`
 6. `pygen_get_snap_parameters([connectivity_snaps_only])`
-7. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
-8. Execute: `slpy exec X.py`, or create test segment `X_test.py` replacing non-executable snaps with file I/O, then `slpy exec X_test.py`
+7. If any snap needs an account: `list_accounts(org, project_path)` to discover + bind it (see Rule 10)
+8. Generate SLPy (file MUST have .py extension) → Validate with Bash: `slpy translate -src X.py -dest X.slp -strict`
+9. Execute: `slpy exec X.py`, or create test segment `X_test.py` replacing non-executable snaps with file I/O, then `slpy exec X_test.py`
 
 #### Pattern 3: Refinement (Target: 1-3 calls)
 **Use for:** Updating existing pipelines
@@ -1430,8 +1433,8 @@ snap_0 = APISuiteHTTPClient(
     label='Call API', http_method='POST', uri='https://example.com',
     pm_account=Account(
         ref_class_id='com-snaplogic-snaps-apisuite-accounts-headerauthaccount',
-        label='my-account',
-        ref_id='...'
+        label='my-account'
+        # no ref_id on a new binding — the platform resolves it on import once `label` locates the account (see below)
     )
 )
 
@@ -2529,6 +2532,21 @@ The SnapLogic Expression Language is a powerful utility that allows you to use e
 
 > **Note:** Strict equals (`===`) and strict not equals (`!==`) are NOT supported.
 
+> **There is no `new` operator.** `SnapExpressions.g4` declares a `New` token that no parser rule
+> consumes, so `new Date(...)`, `new RegExp(...)`, `new Object()`, `new Array()` are **compile
+> errors on the platform** — in every expression context, not just expression libraries. Use:
+>
+> | Instead of | Write |
+> |---|---|
+> | `new Date()` | `Date.now()` |
+> | `new Date(str)` / `new Date(ms)` | `Date.parse(str)` / `Date.parse(ms)` |
+> | `new Date(y, m, d)` | `Date.UTC(y, m, d)` |
+> | `new RegExp("pat")` | `/pat/` |
+> | `new Object()` / `new Array()` | `{}` / `[]` |
+> | `new Set($arr)` for uniqueness | `$arr.filter((v, i, a) => a.indexOf(v) == i)` |
+>
+> This does NOT apply inside Script Snap bodies, which run real JavaScript/Jython where `new` is valid.
+
 **Logical Operators:**
 - `&&` (AND)
 - `||` (OR)
@@ -2932,18 +2950,21 @@ Dates function similarly to JavaScript Date objects. A Date represents the numbe
 ```javascript
 // Current date/time
 Date.now()
-new Date()
 
 // From timestamp (milliseconds)
-new Date(1609459200000)
+// CAUTION: the epoch path is gated behind the DATE_PARSE_TS_UTC feature flag
+// (Date.java:543, default false), so the DateTime is built in the node's default
+// zone, not UTC -- Cloudplex and Groundplex can differ. Pass an ISO string, or
+// format explicitly with toLocaleDateTimeString('{"timeZone": "UTC"}'), when it matters.
+Date.parse(1609459200000)
 
 // From string
-new Date("2021-01-01")
-new Date("2021-01-01T12:00:00Z")
+Date.parse("2021-01-01")
+Date.parse("2021-01-01T12:00:00Z")
 
 // From components (year, month, day, hour, minute, second, ms)
 // Note: getMonth() is 1-indexed (1 = January); getMonthFromZero() is 0-indexed
-new Date(2021, 0, 1, 12, 0, 0, 0)
+Date.UTC(2021, 0, 1, 12, 0, 0, 0)
 ```
 
 #### Date Comparison
@@ -3464,14 +3485,24 @@ $firstName.charAt(0).toLowerCase() + $lastName.toLowerCase() + "@company.com"
 
 **Creating and Formatting a Date in Specific Timezone:**
 ```javascript
-new Date().toLocaleDateString("en-US", {timeZone: "America/New_York"})
+Date.parse("2026-08-25T02:00:00.000Z").toLocaleDateTimeString('{"format": "yyyy-MM-dd", "timeZone": "America/New_York"}')
+// "2026-08-24" — shifted back a day by the timezone
 ```
+
+Use `toLocaleDateTimeString` when you need a timezone, **not** `toLocaleDateString`. slpy-elang's
+`toLocaleDateString` never reads the `timeZone` key, so the shift silently does not happen during
+local validation and the output diverges from the platform.
 
 **Formatting Date with Letters:**
 ```javascript
-new Date().toLocaleDateString("en-US", {month: "long", day: "numeric", year: "numeric"})
+Date.now().toLocaleDateString('{"format": "MMMM d, yyyy"}')
 // "January 15, 2021"
 ```
+
+> **Pass the options as a JSON *string*, not an object literal.** The platform accepts both
+> (`DateMethod.getOptions` takes a Map or parses a JSON string), but slpy-elang currently only
+> parses the string form — an object literal silently falls back to `MM/dd/yyyy`, so
+> `slpy exec` output will not match the platform. Recognised keys: `format`, `timeZone`, `locale`.
 
 **Creating ISO-formatted Date:**
 ```javascript
@@ -3481,7 +3512,7 @@ Date.now().toString()
 
 **Parsing a Date:**
 ```javascript
-new Date(Date.parse($dateString))
+Date.parse($dateString)
 Date.parse("2021-01-15")
 ```
 
@@ -3489,12 +3520,12 @@ Date.parse("2021-01-15")
 ```javascript
 // For "15/01/2021" format (DD/MM/YYYY)
 let parts = $dateString.split("/");
-new Date(parts[2], parts[1] - 1, parts[0])
+Date.UTC(parts[2], parts[1] - 1, parts[0])
 ```
 
 **Current Month Name:**
 ```javascript
-new Date().toLocaleDateString("en-US", {month: "long"})
+Date.now().toLocaleDateString('{"format": "MMMM"}')
 // "January"
 ```
 
@@ -3584,7 +3615,7 @@ $items.reduce((groups, item) => {
 | Array length | `$array.length` |
 | First element | `$array[0]` |
 | Last element | `$array[$array.length - 1]` |
-| Unique values | `[...new Set($array)]` |
+| Unique values | `$array.filter((v, i, arr) => arr.indexOf(v) == i)` |
 | Sort ascending | `$array.sort((a,b) => a - b)` |
 | Sort descending | `$array.sort((a,b) => b - a)` |
 
@@ -3600,7 +3631,7 @@ $items.reduce((groups, item) => {
 | Object | JSON String | `JSON.stringify($obj)` |
 | JSON String | Object | `JSON.parse($str)` |
 | Date | Timestamp | `$date.getTime()` |
-| Timestamp | Date | `new Date($timestamp)` |
+| Timestamp | Date | `Date.parse($timestamp)` |
 
 ---
 
@@ -3622,6 +3653,7 @@ Expression libraries (.expr files) are NOT full JavaScript. They are LIMITED to 
 - **NO `class` definitions**
 - **NO `function` keyword**
 - **NO `===` or `!==`** -- use `==` and `!=` instead
+- **NO `new`** -- SEL has no `new` operator anywhere, not just in `.expr` files. See the note in §8 Expression Language Reference for the full replacement table. (Script Snap bodies are exempt — they are real JavaScript/Jython.)
 - **NO bare nested ternaries** — `a ? b : c ? d : e` is a parse error. ALWAYS wrap each else-branch: `a ? b : (c ? d : e)`. See Gotcha 1
 - **NO `++`, `--`, `+=`, `-=`, `*=`, `/=`** -- not supported
 - **NO `this.otherFunction()` cross-references** -- `this.fn()` returns null in `slpy exec`. Use `lib.<name>.fn()` for cross-references between library functions, or inline the logic.
@@ -3916,7 +3948,7 @@ Usage in Mapper:
 
   toEpoch: (date) => Math.floor(date.getTime() / 1000),
 
-  fromEpoch: (seconds) => new Date(seconds * 1000)
+  fromEpoch: (seconds) => Date.parse(seconds * 1000)
 }
 ```
 
@@ -3925,7 +3957,7 @@ Usage in Mapper:
 lib.date_utils.get_today()                 // "2026-01-15"
 lib.date_utils.get_timestamp()             // "20260115T143522"
 lib.date_utils.prevMonthStartString()      // "2025-12-01"
-lib.date_utils.toEpoch(new Date())         // 1704067200
+lib.date_utils.toEpoch(Date.now())         // 1704067200
 ```
 
 #### Example: String Utilities Library
