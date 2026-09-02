@@ -1,0 +1,442 @@
+#!/usr/bin/env python3
+"""SnapCode plugin bootstrap — runs on every SessionStart, cross-platform (macOS + Windows).
+
+Installs the slpy CLI into the plugin's persistent data dir and keeps it reasonably
+fresh, without hitting the network on every session.
+
+slpy source:
+  The SLServer installer endpoint (which fronts the token broker) — bootstrap GETs
+  {SNAPLOGIC_BASE_URL}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer
+  with the user's SnapLogic credentials (Basic auth). The endpoint returns a short-lived
+  private-index URL ({"response_map": [{"index_url": ...}]}), and bootstrap installs slpy
+  from the real sl-pypi. Users need no AWS/GitHub.
+  org_id is resolved from SNAPLOGIC_ORG_ID (direct hex ID) or SNAPLOGIC_ORG_NAME (bootstrap
+  looks it up via /api/1/rest/public/users/{email}).
+
+Update cadence: slpy publishes very frequently, so we DON'T check every session. We check
+at most once per TTL window (default 24h). Between checks, an already-installed slpy is
+used as-is — no installer call, no network. Channel: develop (newest) for now.
+
+MCP auth: handled separately and needs no setup here — .mcp.json points headersHelper
+straight at ${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py, which runs in place from the
+plugin. The helper reads the user's SnapLogic credentials from their ENVIRONMENT; this
+script never handles credentials or reads a repo .env.
+
+Design notes:
+  - Invoked from the SessionStart hook as `python3 "${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.py"`.
+    The hook needs a `matcher` (e.g. "startup|resume|clear") or it registers but never fires.
+    All the real logic is Python (not shell), keeping it cross-platform. If python3 is absent
+    on a Windows host so the hook doesn't fire, the slpy launcher (bin/slpy + slpy.cmd) re-runs
+    this bootstrap via sys.executable on the first `slpy` call, so setup still completes.
+  - slpy installs into ${CLAUDE_PLUGIN_DATA} (persists across sessions + plugin updates).
+  - The broker token is passed to uv via ENV (UV_DEFAULT_INDEX), never on the command
+    line, so it doesn't leak into shell history or process listings.
+  - Never hard-fails the session: on any error it logs a hint and exits 0.
+"""
+
+import json
+import os
+import shutil
+import ssl
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+from typing import Optional
+
+PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", Path(__file__).resolve().parent.parent))
+
+
+def _plugin_data_dir() -> Path:
+    """Resolve the plugin's persistent data dir consistently across processes.
+
+    Claude Code sets CLAUDE_PLUGIN_DATA when it runs the SessionStart hook, but NOT
+    when the slpy launcher is invoked via the Bash tool — so if we fell back to
+    PLUGIN_ROOT/.data (version-specific), the hook and the launcher would install/look
+    for slpy in DIFFERENT dirs and re-install endlessly. Fall back to Claude Code's
+    stable per-plugin data path (~/.claude/plugins/data/<plugin>-<marketplace>) so both
+    processes agree. Both plugin and marketplace are named "snapcode" here.
+    """
+    env = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if env:
+        return Path(env)
+    stable = Path.home() / ".claude" / "plugins" / "data" / "snapcode-snapcode"
+    if stable.parent.exists():  # normal installed layout
+        return stable
+    return PLUGIN_ROOT / ".data"  # last resort (e.g. --plugin-dir dev with no data dir)
+
+
+PLUGIN_DATA = _plugin_data_dir()
+
+TOOL_DIR = PLUGIN_DATA / "tools"        # where uv installs slpy
+BIN_DIR = PLUGIN_DATA / "bin"           # where the slpy executable lands
+LAST_CHECK = PLUGIN_DATA / "last_check"  # timestamp of last broker/index check
+
+# The installer endpoint lives on the SnapLogic SLServer:
+#   {base_url}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer
+# base_url = the user's pod (same host as the MCP endpoint), from the user's environment.
+SNAPLOGIC_BASE_URL = os.environ.get("SNAPLOGIC_BASE_URL", "").rstrip("/")
+# Org ID for the fetch_installer URL path. Two ways to provide it (ID takes priority):
+#   SNAPLOGIC_ORG_ID  — the 24-char hex org ID directly (e.g. from Manager > Settings)
+#   SNAPLOGIC_ORG_NAME — the org name (e.g. "mycompany"); bootstrap resolves it to an ID
+#                       via GET /api/1/rest/public/users/{email} on first run.
+# If neither is set, bootstrap logs a hint and skips slpy installation.
+SNAPLOGIC_ORG_ID = os.environ.get("SNAPLOGIC_ORG_ID", "")
+SNAPLOGIC_ORG_NAME = os.environ.get("SNAPLOGIC_ORG_NAME", "")
+# How often to check the index for a newer slpy (seconds). slpy publishes often, so a
+# daily check keeps users current without a broker call every session.
+CHECK_TTL = int(os.environ.get("SNAPCODE_CHECK_TTL", str(24 * 3600)))
+
+# Note: the MCP auth helper (bin/mcp_headers.py) is referenced directly from .mcp.json
+# via ${CLAUDE_PLUGIN_ROOT}, so bootstrap no longer copies it anywhere — that removes the
+# first-session race where the MCP tried to connect before the helper was in place.
+
+SLPY_EXE = BIN_DIR / ("slpy.exe" if os.name == "nt" else "slpy")
+
+
+def log(msg: str) -> None:
+    print(f"[snapcode-bootstrap] {msg}", file=sys.stderr)
+
+
+# One-time welcome flag (shown only on the very first session after install).
+WELCOME_FLAG = PLUGIN_DATA / ".welcomed"
+
+WELCOME_TEXT = (
+    "👋 SnapCode is set up. This plugin gives you:\n"
+    "  • Skills — snaplogic-slpy-gen (generate pipelines) and snaplogic-deploy (deploy/validate)\n"
+    "  • Cloud MCP `snaplogic` — snap discovery + platform tools, no local server\n"
+    "  • The `slpy` CLI — auto-installed, for translate/validate/execute\n"
+    "Tip: for best results use an Opus/Sonnet model — switch with /model."
+)
+
+
+def emit_to_user(system_message: str = "", model_context: str = "") -> None:
+    """Emit a SessionStart hook JSON result. `systemMessage` is shown to the USER;
+    `additionalContext` is injected for the model. Printed to stdout (SessionStart
+    reads stdout); no-op if both are empty."""
+    if not system_message and not model_context:
+        return
+    out = {}
+    if system_message:
+        out["systemMessage"] = system_message
+    if model_context:
+        out["hookSpecificOutput"] = {
+            "hookEventName": "SessionStart",
+            "additionalContext": model_context,
+        }
+    print(json.dumps(out))
+
+
+def first_time() -> bool:
+    """True the first time ever (welcome not yet shown). Marks it shown."""
+    if WELCOME_FLAG.exists():
+        return False
+    try:
+        PLUGIN_DATA.mkdir(parents=True, exist_ok=True)
+        WELCOME_FLAG.write_text("shown\n")
+    except Exception:
+        pass
+    return True
+
+
+# ── uv ────────────────────────────────────────────────────────────────────────
+def ensure_uv() -> Optional[str]:
+    """Return path to uv, installing it if missing. Cross-platform."""
+    uv = shutil.which("uv")
+    if uv:
+        return uv
+    log("uv not found on PATH — installing…")
+    try:
+        if os.name == "nt":
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                            "irm https://astral.sh/uv/install.ps1 | iex"], check=True)
+        else:
+            subprocess.run("curl -LsSf https://astral.sh/uv/install.sh | sh",
+                           shell=True, check=True)
+    except subprocess.CalledProcessError as e:
+        log(f"failed to install uv: {e}")
+        return None
+    for cand in (shutil.which("uv"),
+                 str(Path.home() / ".local" / "bin" / "uv"),
+                 str(Path.home() / ".cargo" / "bin" / "uv"),
+                 os.path.expandvars(r"%USERPROFILE%\.local\bin\uv.exe")):
+        if cand and Path(cand).exists():
+            return cand
+    return None
+
+
+# ── timing ────────────────────────────────────────────────────────────────────
+def check_due() -> bool:
+    """True if we haven't checked the index within the TTL window."""
+    if not SLPY_EXE.exists():
+        return True  # not installed yet — must install
+    if not LAST_CHECK.exists():
+        return True
+    try:
+        last = float(LAST_CHECK.read_text().strip())
+    except Exception:
+        return True
+    return (time.time() - last) >= CHECK_TTL
+
+
+def mark_checked() -> None:
+    PLUGIN_DATA.mkdir(parents=True, exist_ok=True)
+    LAST_CHECK.write_text(str(time.time()))
+
+
+# ── installer endpoint (SLServer) ─────────────────────────────────────────────
+# Identify the SnapCode plugin as a real client. Some pods (e.g. canary) sit behind
+# Cloudflare bot protection that rejects the default Python-urllib User-Agent with a
+# 1010 error; a proper UA identifies our legitimate client (like gh/aws CLIs do).
+USER_AGENT = "snapcode-plugin-bootstrap/0.1 (+https://github.com/Snap-Developers/SnapCode-CC-Plugin)"
+
+
+def _request_headers(user: str, pw: str) -> dict:
+    import base64
+    return {
+        "Authorization": "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode(),
+        "User-Agent": USER_AGENT,
+    }
+
+
+# What to tell the user when an HTTPS call fails TLS verification (as opposed to a real
+# credentials/URL problem). Both onboarding failures we've seen (2026-08) were this: a
+# python.org macOS Python whose CA bundle was never populated, mis-reported as a
+# "credentials missing" error and sending people to chase config that was already correct.
+TLS_TRUST_HINT = (
+    "this is a TLS trust problem, NOT a credentials/URL problem — your Python has no "
+    "usable CA trust store (common on python.org macOS builds where the bundled "
+    "'Install Certificates.command' was never run), or a corporate proxy presents a "
+    "custom root CA your Python can't see. Fix: run \"/Applications/Python 3.x/Install "
+    "Certificates.command\" (macOS python.org build), or point Python at a CA bundle, e.g. "
+    "export SSL_CERT_FILE=\"$(python3 -c 'import certifi; print(certifi.where())')\". "
+    "See SnapCode setup docs."
+)
+
+
+# Set when any HTTPS call in this run failed TLS certificate verification, so main() can
+# emit the TLS hint at its final (most visible) exit point instead of the misleading
+# "credentials missing" message — see fetch_index_url / resolve_org_id.
+_TLS_TRUST_FAILURE = False
+
+
+def _is_tls_trust_error(e: Exception) -> bool:
+    """True if a urlopen failure was a TLS certificate-verification failure (vs. a real
+    connectivity/auth error). urllib wraps the ssl error in URLError.reason.
+
+    We match ssl.SSLCertVerificationError specifically (not any ssl.SSLError) — the two
+    scenarios this targets (empty CA bundle, corporate proxy root) raise exactly that,
+    while other SSLErrors (protocol mismatch, handshake EOF) are NOT trust problems and
+    shouldn't send the user to run Install Certificates.command."""
+    return (isinstance(e, ssl.SSLCertVerificationError)
+            or isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError))
+
+
+def _ssl_context() -> Optional[ssl.SSLContext]:
+    """Build the SSL context for bootstrap's own HTTPS calls, tolerating a broken/empty
+    default trust store.
+
+    bootstrap runs on the user's own Python — BEFORE slpy's venv exists — so the default
+    SSL context is whatever that bare interpreter ships. Two common breakages:
+      • python.org macOS builds where "Install Certificates.command" was never run have an
+        EMPTY OpenSSL cert bundle → every HTTPS call fails CERTIFICATE_VERIFY_FAILED.
+      • a corporate SSL-inspection proxy presents a custom root CA that lives only in the
+        OS trust store, which Python's default context doesn't read.
+
+    Prefer, in order:
+      1. truststore — use the OS native trust store (macOS Keychain / Windows cert store /
+         Linux CA bundle). Covers BOTH cases above. Used only if importable.
+      2. certifi's CA bundle — public roots; covers the empty-bundle case. If importable.
+      3. None — Python's default context (today's behaviour; no regression).
+
+    NOTE: this only affects the context object we build in-process for our own requests —
+    it does NOT modify the user's machine (no cert.pem written, no env changed). And it
+    NEVER disables verification: every branch still verifies certs, just against a valid
+    trust source. truststore/certifi may be absent in the bare interpreter; when neither
+    imports we fall through to the default and rely on the TLS_TRUST_HINT to guide the fix.
+    """
+    try:
+        import truststore
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:
+        pass
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    return None
+
+
+def resolve_org_id(user: str, pw: str) -> Optional[str]:
+    """Resolve org ID from SNAPLOGIC_ORG_ID (direct) or SNAPLOGIC_ORG_NAME (lookup).
+
+    Priority:
+      1. SNAPLOGIC_ORG_ID — used as-is (no network call needed)
+      2. SNAPLOGIC_ORG_NAME — resolved via GET /api/1/rest/public/users/{email},
+         which returns the user's org list with IDs. No admin required.
+
+    Returns the org ID string, or None if it can't be determined.
+    """
+    import urllib.parse
+
+    if SNAPLOGIC_ORG_ID:
+        return SNAPLOGIC_ORG_ID
+
+    if not SNAPLOGIC_ORG_NAME:
+        log("Neither SNAPLOGIC_ORG_ID nor SNAPLOGIC_ORG_NAME is set. "
+            "Set one of them to install slpy. See SnapCode setup docs.")
+        return None
+
+    # Look up org ID from org name via the platform user API.
+    url = f"{SNAPLOGIC_BASE_URL}/api/1/rest/public/users/{urllib.parse.quote(user, safe='')}"
+    req = urllib.request.Request(url, headers=_request_headers(user, pw))
+    try:
+        with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as r:
+            orgs = json.load(r).get("organizations", [])
+    except Exception as e:
+        if _is_tls_trust_error(e):
+            global _TLS_TRUST_FAILURE
+            _TLS_TRUST_FAILURE = True
+            log(f"org lookup failed ({url}): {e} — {TLS_TRUST_HINT}")
+        else:
+            log(f"org lookup failed ({url}): {e} — set SNAPLOGIC_ORG_ID directly to skip lookup.")
+        return None
+
+    matches = [o for o in orgs if o.get("name", "").lower() == SNAPLOGIC_ORG_NAME.lower()]
+    if not matches:
+        names = [o.get("name") for o in orgs]
+        log(f"org '{SNAPLOGIC_ORG_NAME}' not found. Available: {names}. "
+            "Check SNAPLOGIC_ORG_NAME or use SNAPLOGIC_ORG_ID directly.")
+        return None
+
+    org_id = matches[0]["id"]
+    log(f"resolved org '{SNAPLOGIC_ORG_NAME}' → {org_id}")
+    return org_id
+
+
+def fetch_index_url() -> Optional[str]:
+    """Ask the SLServer installer endpoint for a private-index URL.
+
+    GET {base_url}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer with the user's
+    SnapLogic credentials (Basic auth). The endpoint verifies the caller and returns
+    {"response_map": [{"index_url": "<token-embedded private index URL>", "expires_in": N}]}.
+
+    Org ID is resolved from SNAPLOGIC_ORG_ID (direct) or SNAPLOGIC_ORG_NAME (lookup).
+    Returns the index URL, or None if anything required is missing or the call fails.
+    """
+    user = os.environ.get("SNAPLOGIC_API_USER")
+    pw = os.environ.get("SNAPLOGIC_API_PASS")
+    if not (user and pw):
+        log("SNAPLOGIC_API_USER/PASS not set; cannot fetch installer. See SnapCode setup docs.")
+        return None
+    if not SNAPLOGIC_BASE_URL:
+        log("SNAPLOGIC_BASE_URL not set; cannot fetch installer. See SnapCode setup docs.")
+        return None
+
+    org_id = resolve_org_id(user, pw)
+    if not org_id:
+        return None
+
+    url = f"{SNAPLOGIC_BASE_URL}/api/1/rest/slserver/snapcode/{org_id}/fetch_installer"
+    req = urllib.request.Request(url, method="GET", headers=_request_headers(user, pw))
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=_ssl_context()) as r:
+            body = json.load(r)
+    except Exception as e:
+        if _is_tls_trust_error(e):
+            global _TLS_TRUST_FAILURE
+            _TLS_TRUST_FAILURE = True
+            log(f"installer request failed ({url}): {e} — {TLS_TRUST_HINT}")
+        else:
+            log(f"installer request failed ({url}): {e}")
+        return None
+    # Response shape: {"response_map": [{"index_url": ...}]} (list). Fall back to flat shape.
+    rmap = body.get("response_map")
+    if isinstance(rmap, list) and rmap:
+        return rmap[0].get("index_url")
+    if isinstance(rmap, dict):
+        return rmap.get("index_url")
+    return body.get("index_url")
+
+
+def install_slpy_from_index(uv: str, index_url: str) -> bool:
+    """Install/update slpy from the private index. Token is passed via ENV, not argv."""
+    PLUGIN_DATA.mkdir(parents=True, exist_ok=True)
+    # Pass the token-bearing index URL through the environment so it never appears on
+    # the command line (shell history / ps). uv reads UV_DEFAULT_INDEX.
+    env = dict(os.environ,
+               UV_TOOL_DIR=str(TOOL_DIR), UV_TOOL_BIN_DIR=str(BIN_DIR),
+               UV_DEFAULT_INDEX=index_url)
+    log("installing/updating slpy from the private index…")
+    try:
+        # --native-tls: trust the OS native certificate store (Windows cert store /
+        #   macOS Keychain / Linux CA bundle) so uv can reach the private index from
+        #   behind a corporate SSL-inspection proxy with a custom root CA. Without it,
+        #   uv's bundled TLS stack rejects the connection (UnknownIssuer) and never
+        #   reaches our index. NOTE: the var is UV_NATIVE_TLS — uv has NO UV_SYSTEM_CERTS.
+        # --no-build-package slpy: our slpy is a pre-built wheel on the private index.
+        #   If resolution ever falls through to public PyPI (where "slpy" is an
+        #   unrelated 3rd-party package), forbid building it from source so the install
+        #   fails loudly instead of silently compiling a foreign package.
+        subprocess.run([uv, "tool", "install", "--force", "--native-tls",
+                        "--no-build-package", "slpy", "slpy"], env=env, check=True)
+    except subprocess.CalledProcessError as e:
+        log(f"slpy install failed: {e}")
+        return False
+    return True
+
+
+# ── main ───────────────────────────────────────────────────────────────────--
+def main() -> int:
+    # MCP auth no longer needs setup here — .mcp.json points headersHelper straight at
+    # ${CLAUDE_PLUGIN_ROOT}/bin/mcp_headers.py, which exists at install time.
+    #
+    # We collect a single user-facing message and emit it once at the end (a hook can
+    # only emit one JSON result). Two independent parts:
+    #   - welcome: shown ONLY the first session ever (WELCOME_FLAG)
+    #   - install note: shown ONLY when we actually (re)install slpy this run
+    welcome = WELCOME_TEXT if first_time() else ""
+
+    # slpy already present + checked within TTL → stay quiet (no install note).
+    if not check_due():
+        log(f"slpy present and checked within {CHECK_TTL // 3600}h — skipping")
+        emit_to_user(welcome)
+        return 0
+
+    uv = ensure_uv()
+    if not uv:
+        log("uv unavailable; cannot install slpy. Install uv and restart the session.")
+        emit_to_user(welcome, "SnapCode: `uv` is not installed, so the slpy CLI can't be "
+                              "set up. Install uv and restart the session.")
+        return 0
+
+    # Install/update slpy from the private index via the SLServer installer endpoint.
+    # This can take ~20s on first run (downloads the toolchain), so tell the user.
+    index_url = fetch_index_url()
+    if index_url and install_slpy_from_index(uv, index_url):
+        mark_checked()
+        log(f"done. slpy ready at {SLPY_EXE}")
+        note = "⏳ SnapCode: first-time setup done — the slpy CLI is installed and ready."
+        emit_to_user((welcome + "\n\n" + note).strip() if welcome else note)
+        return 0
+
+    # If the install failed because an HTTPS call couldn't verify certificates, say THAT —
+    # the generic "credentials missing" message would send the user to chase config that's
+    # already correct (the exact failure mode this PR exists to kill).
+    if _TLS_TRUST_FAILURE:
+        log(f"slpy not installed: {TLS_TRUST_HINT}")
+        emit_to_user(welcome, "SnapCode: could not install the slpy CLI — " + TLS_TRUST_HINT)
+        return 0
+
+    log("slpy not installed: installer endpoint unreachable or credentials missing. "
+        "Check SNAPLOGIC_BASE_URL and your SnapLogic credentials (see setup docs).")
+    emit_to_user(welcome, "SnapCode: could not install the slpy CLI (installer endpoint "
+                          "unreachable or SnapLogic credentials missing). Check "
+                          "SNAPLOGIC_BASE_URL + credentials; see the setup docs.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

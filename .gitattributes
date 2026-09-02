@@ -1,0 +1,5 @@
+plugin/bin/slpy text eol=lf
+plugin/bin/bootstrap.py text eol=lf
+plugin/bin/mcp_headers.py text eol=lf
+
+plugin/bin/slpy.cmd text eol=crlf
