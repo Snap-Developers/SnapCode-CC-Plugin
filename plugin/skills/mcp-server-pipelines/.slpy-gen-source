@@ -1,0 +1,4 @@
+source: SnapLogic/snaplogic-slpy-gen@ee32b47bf821a3ab9fdf045f91a804c5e80607d8
+profile: snapcode
+skill: mcp-server-pipelines
+sha256: 6e7adc3a66dfc589e001ae194d09d151bc16f7cd52c2cbf78e740a87b3e87f4e

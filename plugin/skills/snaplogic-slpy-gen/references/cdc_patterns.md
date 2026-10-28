@@ -122,11 +122,11 @@ snap_diff = TransformDiff(
     sort_order="Ascending",
     output_view_map_prop=[
         TransformDiff.OutputViewMapPropItem(
-            output_view_name_prop="Deletions",
+            output_view_name_prop="Deleted",
             output_view_type_prop="DELETIONS"
         ),
         TransformDiff.OutputViewMapPropItem(
-            output_view_name_prop="Insertions",
+            output_view_name_prop="Inserted",
             output_view_type_prop="INSERTIONS"
         ),
         TransformDiff.OutputViewMapPropItem(
@@ -134,7 +134,7 @@ snap_diff = TransformDiff(
             output_view_type_prop="MODIFIED"
         ),
         TransformDiff.OutputViewMapPropItem(
-            output_view_name_prop="Unmodified",
+            output_view_name_prop="Same",
             output_view_type_prop="UNMODIFIED"
         ),
     ],
@@ -468,7 +468,7 @@ snap_s3_upload = S3Upload(
         "+lib.cdc_config.Account.Details.FULL_S3.Prefix_Date"
         "+lib.cdc_config.Account.Details.FULL_S3.File_Name"
     ),
-    pm_account=Expr('lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())'),
+    pm_account="lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())",
 )
 ```
 
@@ -623,7 +623,7 @@ p.connect(src=snap_group_n, dst=snap_merge,
 
 # FlowCopy output → Sort → GroupByFields → Extract → Merge (input1)
 p.connect(src=snap_delta_copy, dst=snap_sort_full,
-          src_view_id="output0", dst_view_id="input0",
+          src_view_id="output0", src_view_label="Merge", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_sort_full, dst=snap_group_fields,
           src_view_id="output0", dst_view_id="input0",
@@ -709,26 +709,26 @@ p.connect(src=snap_lowercase, dst=snap_router,
 ```python
 # Router(Delta) → FlowCopy
 p.connect(src=snap_router, dst=snap_delta_copy,
-          src_view_id="output1", dst_view_id="input0",
+          src_view_id="output1", src_view_label="Delta", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 
 # FlowCopy output1 → TransformDiff(inputNew)
 p.connect(src=snap_delta_copy, dst=snap_diff,
-          src_view_id="output1", dst_view_id="inputNew",
+          src_view_id="output1", src_view_label="Diff", dst_view_id="inputNew",
           src_output_type="document", dst_input_type="document")
 
 # TransformDiff outputs → Label mappers
 p.connect(src=snap_diff, dst=snap_label_delete,
-          src_view_id="outputDeletions", dst_view_id="input0",
+          src_view_id="outputDeletions", src_view_label="Deleted", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_diff, dst=snap_label_insert,
-          src_view_id="outputInsertions", dst_view_id="input0",
+          src_view_id="outputInsertions", src_view_label="Inserted", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_diff, dst=snap_label_update,
-          src_view_id="outputModified", dst_view_id="input0",
+          src_view_id="outputModified", src_view_label="Modified", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_diff, dst=snap_consume,
-          src_view_id="outputUnmodified", dst_view_id="input0",
+          src_view_id="outputUnmodified", src_view_label="Same", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 
 # Label mappers → Union
@@ -759,7 +759,7 @@ p.connect(src=snap_json_fmt_delta, dst=snap_s3_delta,
 ```python
 # Router(Full) → Masking → FlowCopy
 p.connect(src=snap_router, dst=snap_masking_full,
-          src_view_id="output0", dst_view_id="input0",
+          src_view_id="output0", src_view_label="Full", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_masking_full, dst=snap_full_copy,
           src_view_id="output0", dst_view_id="input0",
@@ -767,7 +767,7 @@ p.connect(src=snap_masking_full, dst=snap_full_copy,
 
 # FlowCopy → S3 branch
 p.connect(src=snap_full_copy, dst=snap_json_fmt_full,
-          src_view_id="output0", dst_view_id="input0",
+          src_view_id="output0", src_view_label="To S3", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_json_fmt_full, dst=snap_s3_full,
           src_view_id="output0", dst_view_id="input0",
@@ -775,7 +775,7 @@ p.connect(src=snap_json_fmt_full, dst=snap_s3_full,
 
 # FlowCopy → FTP branch (remove CDC columns → CSV → FileWriter)
 p.connect(src=snap_full_copy, dst=snap_remove_cdc_cols,
-          src_view_id="output1", dst_view_id="input0",
+          src_view_id="output1", src_view_label="To FTP", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_remove_cdc_cols, dst=snap_csv_fmt,
           src_view_id="output0", dst_view_id="input0",
@@ -893,7 +893,7 @@ snap_source = SnowflakeExecute(
     ),
     query_type="Auto",
     pass_through=True,
-    pm_account=Expr('lib.my_shared_accounts.Snowflake_Account.get(lib.my_shared_accounts.getEnv())'),
+    pm_account="lib.my_shared_accounts.Snowflake_Account.get(lib.my_shared_accounts.getEnv())",
 )
 
 # ── Lowercase Keys ─────────────────────────────────────────────────────────
@@ -970,16 +970,16 @@ snap_diff = TransformDiff(
     sort_order="Ascending",
     output_view_map_prop=[
         TransformDiff.OutputViewMapPropItem(
-            output_view_name_prop="Deletions", output_view_type_prop="DELETIONS"
+            output_view_name_prop="Deleted", output_view_type_prop="DELETIONS"
         ),
         TransformDiff.OutputViewMapPropItem(
-            output_view_name_prop="Insertions", output_view_type_prop="INSERTIONS"
+            output_view_name_prop="Inserted", output_view_type_prop="INSERTIONS"
         ),
         TransformDiff.OutputViewMapPropItem(
             output_view_name_prop="Modified", output_view_type_prop="MODIFIED"
         ),
         TransformDiff.OutputViewMapPropItem(
-            output_view_name_prop="Unmodified", output_view_type_prop="UNMODIFIED"
+            output_view_name_prop="Same", output_view_type_prop="UNMODIFIED"
         ),
     ],
     execution_mode="Execute only",
@@ -1125,7 +1125,7 @@ snap_s3_delta = S3Upload(
         "+lib.cdc_config.Account.Details.DELTA_S3.Prefix_Date"
         "+lib.cdc_config.Account.Details.DELTA_S3.File_Name"
     ),
-    pm_account=Expr('lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())'),
+    pm_account="lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())",
     execution_mode="Execute only",
 )
 
@@ -1188,7 +1188,7 @@ snap_s3_full = S3Upload(
         "+lib.cdc_config.Account.Details.FULL_S3.Prefix_Date"
         "+lib.cdc_config.Account.Details.FULL_S3.File_Name"
     ),
-    pm_account=Expr('lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())'),
+    pm_account="lib.my_shared_accounts.S3_Account.get(lib.my_shared_accounts.getEnv())",
     execution_mode="Execute only",
 )
 
@@ -1261,24 +1261,24 @@ p.connect(src=snap_lowercase, dst=snap_router,
 
 # ── Delta Path ─────────────────────────────────────────────────────────────
 p.connect(src=snap_router, dst=snap_delta_copy,
-          src_view_id="output1", dst_view_id="input0",
+          src_view_id="output1", src_view_label="Delta", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_delta_copy, dst=snap_diff,
-          src_view_id="output1", dst_view_id="inputNew",
+          src_view_id="output1", src_view_label="Diff", dst_view_id="inputNew",
           src_output_type="document", dst_input_type="document")
 
 # TransformDiff → Label mappers
 p.connect(src=snap_diff, dst=snap_label_delete,
-          src_view_id="outputDeletions", dst_view_id="input0",
+          src_view_id="outputDeletions", src_view_label="Deleted", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_diff, dst=snap_label_insert,
-          src_view_id="outputInsertions", dst_view_id="input0",
+          src_view_id="outputInsertions", src_view_label="Inserted", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_diff, dst=snap_label_update,
-          src_view_id="outputModified", dst_view_id="input0",
+          src_view_id="outputModified", src_view_label="Modified", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_diff, dst=snap_consume,
-          src_view_id="outputUnmodified", dst_view_id="input0",
+          src_view_id="outputUnmodified", src_view_label="Same", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 
 # Label mappers → Union
@@ -1305,7 +1305,7 @@ p.connect(src=snap_json_fmt_delta, dst=snap_s3_delta,
 
 # ── Full Path ──────────────────────────────────────────────────────────────
 p.connect(src=snap_router, dst=snap_masking_full,
-          src_view_id="output0", dst_view_id="input0",
+          src_view_id="output0", src_view_label="Full", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_masking_full, dst=snap_full_copy,
           src_view_id="output0", dst_view_id="input0",
@@ -1313,7 +1313,7 @@ p.connect(src=snap_masking_full, dst=snap_full_copy,
 
 # Full → S3
 p.connect(src=snap_full_copy, dst=snap_json_fmt_full,
-          src_view_id="output0", dst_view_id="input0",
+          src_view_id="output0", src_view_label="To S3", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_json_fmt_full, dst=snap_s3_full,
           src_view_id="output0", dst_view_id="input0",
@@ -1321,7 +1321,7 @@ p.connect(src=snap_json_fmt_full, dst=snap_s3_full,
 
 # Full → FTP (remove CDC cols → CSV → FileWriter)
 p.connect(src=snap_full_copy, dst=snap_remove_cdc_cols,
-          src_view_id="output1", dst_view_id="input0",
+          src_view_id="output1", src_view_label="To FTP", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_remove_cdc_cols, dst=snap_csv_fmt,
           src_view_id="output0", dst_view_id="input0",
@@ -1359,7 +1359,7 @@ p.connect(src=snap_csv_fmt, dst=snap_ftp_writer,
                                 |
                          [Compute Change Type]
                                 |
-                         [FlowRouter] → delta_output / full_output
+                         [FlowRouter] → delta / full
                                 |
                          [Format] → [Write]
 ```
@@ -1370,17 +1370,17 @@ p.connect(src=snap_csv_fmt, dst=snap_ftp_writer,
 {
     stringify_for_hash: (value) => (
         value == null ? ''
-        : Array.isArray(value) ? JSON.stringify(value)
-        : value.toString()
+        : ((value != null && value.length != null) ? JSON.stringify(value)
+        : value.toString())
     ),
 
     compute_record_hash: (rec) => (
-        Crypto.sha256([
+        Digest.sha256([
             rec.id || '',
-            (rec.name == null ? '' : (Array.isArray(rec.name) ? JSON.stringify(rec.name) : rec.name.toString())),
+            (rec.name == null ? '' : ((rec.name != null && rec.name.length != null) ? JSON.stringify(rec.name) : rec.name.toString())),
             rec.status || '',
             rec.category || ''
-        ].join('|')).hex()
+        ].join('|'))
     )
 }
 ```
@@ -1426,7 +1426,7 @@ snap_add_hash = TransformMapper(
 
 ```python
 snap_join = TransformJoin(
-    label="Join with Previous Hashes",
+    label="Join Hashes",
     join_type='Left outer',
     sorted_streams='Ascending',
     join_paths=[
@@ -1470,11 +1470,11 @@ snap_router = FlowRouter(
     routes=[
         FlowRouter.RoutesItem(
             expression=Expr("_cdc_mode == 'delta' && $_change_type != 'UNCHANGED'"),
-            output_view_name="delta_output"
+            output_view_name="delta"
         ),
         FlowRouter.RoutesItem(
             expression=Expr("_cdc_mode == 'full'"),
-            output_view_name="full_output"
+            output_view_name="full"
         ),
     ],
 )
@@ -1486,7 +1486,7 @@ On first run, the hash state file doesn't exist. Use an empty state generator as
 
 ```python
 snap_empty_state = TransformJSONGenerator(
-    label="Generate Empty Hash State",
+    label="Empty Hash State",
     editable_content='{"hashes": {}}',
 )
 # Connect to the expand step — provides fallback when FileReader produces no output
@@ -1528,7 +1528,7 @@ snap_save_state = BinaryFileWriter(label="Save Hash State", filename=Expr("_hash
 ### Previous State Loading
 
 ```python
-snap_load_prev = BinaryFileReader(label="Load Previous Hashes", file_path=Expr("_hash_state_path"))
+snap_load_prev = BinaryFileReader(label="Load Hashes", file_path=Expr("_hash_state_path"))
 snap_parse_prev = TransformJSONParser(label="Parse Hash JSON", json_lines=False)
 
 snap_expand = TransformMapper(
@@ -1561,7 +1561,7 @@ snap_split = TransformMapper(
 )
 
 snap_sort_prev = TransformSort(
-    label="Sort Previous Hashes",
+    label="Sort Hashes",
     sort_paths=[TransformSort.SortPathsItem(sort_path="$_record_id", sort_order_ind="ascending")],
     null_safe_access=True,
 )
@@ -1579,7 +1579,8 @@ p.connect(src=snap_sort, dst=snap_branch, src_view_id="output0", dst_view_id="in
           src_output_type="document", dst_input_type="document")
 
 # Hash save branch: FlowCopy output1 → Collect → Build Map → Format → Write
-p.connect(src=snap_branch, dst=snap_collect, src_view_id="output1", dst_view_id="input0",
+p.connect(src=snap_branch, dst=snap_collect, src_view_id="output1", src_view_label="Hashes",
+          dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_collect, dst=snap_build_map, src_view_id="output0", dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
@@ -1603,7 +1604,8 @@ p.connect(src=snap_empty_state, dst=snap_expand, src_view_id="output0", dst_view
           src_output_type="document", dst_input_type="document")
 
 # Join: FlowCopy output0 + sorted prev hashes
-p.connect(src=snap_branch, dst=snap_join, src_view_id="output0", dst_view_id="input0",
+p.connect(src=snap_branch, dst=snap_join, src_view_id="output0", src_view_label="Compare",
+          dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_sort_prev, dst=snap_join, src_view_id="output0", dst_view_id="input1",
           src_output_type="document", dst_input_type="document")
@@ -1615,11 +1617,13 @@ p.connect(src=snap_change_type, dst=snap_router, src_view_id="output0", dst_view
           src_output_type="document", dst_input_type="document")
 
 # Output branches
-p.connect(src=snap_router, dst=snap_fmt_delta, src_view_id="delta_output", dst_view_id="input0",
+p.connect(src=snap_router, dst=snap_fmt_delta, src_view_id="output0", src_view_label="delta",
+          dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_fmt_delta, dst=snap_write_delta, src_view_id="output0", dst_view_id="input0",
           src_output_type="binary", dst_input_type="binary")
-p.connect(src=snap_router, dst=snap_fmt_full, src_view_id="full_output", dst_view_id="input0",
+p.connect(src=snap_router, dst=snap_fmt_full, src_view_id="output1", src_view_label="full",
+          dst_view_id="input0",
           src_output_type="document", dst_input_type="document")
 p.connect(src=snap_fmt_full, dst=snap_write_full, src_view_id="output0", dst_view_id="input0",
           src_output_type="binary", dst_input_type="binary")
@@ -1721,7 +1725,7 @@ p.connect(src=snap_diff, dst=snap_label_update, src_view_id="outputModified", ..
 ```python
 # Always connect and consume outputUnmodified
 p.connect(src=snap_diff, dst=snap_consume,
-          src_view_id="outputUnmodified", dst_view_id="input0", ...)
+          src_view_id="outputUnmodified", src_view_label="Same", dst_view_id="input0", ...)
 ```
 
 Unconsumed output views cause the TransformDiff snap to block waiting for the downstream to read, hanging the entire pipeline.
@@ -1755,14 +1759,14 @@ The prior snapshot file (FTP/file system) must be updated after each full run so
 **Wrong:**
 ```javascript
 compute_record_hash: (rec) => (
-    Crypto.sha256([rec.id, rec.name, rec.created_at, rec.updated_at].join('|')).hex()
+    Digest.sha256([rec.id, rec.name, rec.created_at, rec.updated_at].join('|'))
 )
 ```
 
 **Correct:**
 ```javascript
 compute_record_hash: (rec) => (
-    Crypto.sha256([rec.id || '', rec.name || ''].join('|')).hex()
+    Digest.sha256([rec.id || '', rec.name || ''].join('|'))
 )
 ```
 

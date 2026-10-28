@@ -67,10 +67,10 @@ An **Expression Library** is a project file (`.expr`) that exposes **reusable fu
 {
   iso: 'yyyy-MM-dd',
 
-  to_ymd: d => (d || Date.now()).toString("yyyy-MM-dd"),
+  to_ymd: d => (d || Date.now()).toLocaleDateTimeString({"format": "yyyy-MM-dd"}),
 
-  prev_month_start_string: x => (x || Date.now()).minusMonths(1).withDayOfMonth(1).toString("yyyy-MM-dd"),
-  prev_month_end_string:   x => (x || Date.now()).withDayOfMonth(1).minusSeconds(1).toString("yyyy-MM-dd")
+  prev_month_start_string: x => (x || Date.now()).minusMonths(1).withDayOfMonth(1).toLocaleDateTimeString({"format": "yyyy-MM-dd"}),
+  prev_month_end_string:   x => (x || Date.now()).withDayOfMonth(1).minusSeconds(1).toLocaleDateTimeString({"format": "yyyy-MM-dd"})
 }
 ```
 

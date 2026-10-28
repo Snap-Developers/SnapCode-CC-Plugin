@@ -1,7 +1,7 @@
 ---
 name: snaplogic-deploy
 description: "Deploy, validate, and iteratively fix SnapLogic pipelines on the Control Plane. Covers the full loop: translate .py → .slp, upload supporting files, import to platform, validate, surface errors, fix source, repeat until validation passes."
-tools: Read, Write, Bash, TodoWrite, mcp__snaplogic__import_pipeline, mcp__snaplogic__validate_pipeline, mcp__snaplogic__execute_pipeline, mcp__snaplogic__list_snaplexes, mcp__snaplogic__save_user_preferences, mcp__snaplogic__upload_sldb
+tools: Read, Write, Bash, TodoWrite, mcp__plugin_snapcode_snaplogic__import_pipeline, mcp__plugin_snapcode_snaplogic__validate_pipeline, mcp__plugin_snapcode_snaplogic__execute_pipeline, mcp__plugin_snapcode_snaplogic__list_snaplexes, mcp__plugin_snapcode_snaplogic__list_organizations, mcp__plugin_snapcode_snaplogic__save_user_preferences, mcp__plugin_snapcode_snaplogic__upload_sldb
 ---
 
 # SnapLogic Deploy Skill
@@ -139,7 +139,7 @@ If the user declines, note that the snap's file path will need to be set manuall
 Resolve **org**, **project_path**, and **snaplex** — three distinct things (see §2). In order of preference:
 
 1. Check saved user preferences — `default_org`, `default_path`, and snaplex may already be stored.
-2. Determine the **org** (the tenant — not a project name; see §2). Then call `list_snaplexes(org="{org}")` to discover snaplexes. **Always pass the org explicitly** — omitting it, or passing a project name in its place, returns a 404.
+2. Determine the **org** (the tenant — not a project name; see §2). If the user doesn't already know the exact org name, find it with `snaplogic org list {keyword}` (a Bash CLI call) first — it filters server-side and returns only matching orgs. Only fall back to `list_organizations` (the MCP tool, no filtering) if `org list` finds nothing with any reasonable keyword, or the CLI itself is unavailable — a full `list_organizations` call can return thousands of orgs and blow past the tool-output size limit. Then call `list_snaplexes(org="{org}")` to discover snaplexes. **Always pass the org explicitly** — omitting it, or passing a project name in its place, returns a 404.
 3. Determine the **project_path** (where the pipeline is stored) and the snaplex — ask the user if still unclear.
 
 > **org, project_path, and snaplex have no built-in defaults.** import/validate/execute require `org` + `project_path` (the platform addresses assets as `{org}/{project_path}/{name}`); validate/execute also require a snaplex (`snaplex_path`, a `runtime_path_id`). The tools fall back to `default_org` / `default_path` / `default_snaplex` **only** if `save_user_preferences` was called earlier **in the current session** — those defaults are in-memory, do NOT persist across MCP reconnects or Claude Code restarts, and are NOT inferred from a previous deploy. When they aren't set:

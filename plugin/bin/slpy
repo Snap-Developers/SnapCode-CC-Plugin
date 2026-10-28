@@ -71,7 +71,9 @@ find_python() {
 # --- Not installed yet → run bootstrap once via the discovered Python, then re-check. ---
 if [ -z "$REAL_SLPY" ]; then
   if _py="$(find_python)"; then
-    "$_py" "$PLUGIN_ROOT/bin/bootstrap.py" || true
+    # Bootstrap prints its SessionStart hook JSON on stdout. Sent to stderr so it
+    # never lands in the output of the slpy command the caller actually ran.
+    SNAPCODE_FROM_LAUNCHER=1 "$_py" "$PLUGIN_ROOT/bin/bootstrap.py" >&2 || true
   else
     printf '%s\n' "[snapcode] no usable Python found to run bootstrap." >&2
     printf '%s\n' "          install Python 3 (python.org / brew / winget) and restart." >&2

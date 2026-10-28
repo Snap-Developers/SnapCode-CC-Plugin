@@ -18,7 +18,8 @@ if defined CLAUDE_PLUGIN_DATA (
 set "REAL_SLPY=%PLUGIN_DATA%\bin\slpy.exe"
 
 if not exist "%REAL_SLPY%" (
-  python "%PLUGIN_ROOT%\bin\bootstrap.py" 2>nul || py "%PLUGIN_ROOT%\bin\bootstrap.py"
+  set "SNAPCODE_FROM_LAUNCHER=1"
+  python "%PLUGIN_ROOT%\bin\bootstrap.py" 1>&2 2>nul || py "%PLUGIN_ROOT%\bin\bootstrap.py" 1>&2
 )
 
 if not exist "%REAL_SLPY%" (

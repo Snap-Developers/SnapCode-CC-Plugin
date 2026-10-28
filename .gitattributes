@@ -1,5 +1,15 @@
 plugin/bin/slpy text eol=lf
 plugin/bin/bootstrap.py text eol=lf
 plugin/bin/mcp_headers.py text eol=lf
+plugin/bin/snaplogic text eol=lf
 
 plugin/bin/slpy.cmd text eol=crlf
+plugin/bin/snaplogic.cmd text eol=crlf
+
+# Skill content is vendored from SnapLogic/snaplogic-slpy-gen, which is LF-only.
+# Without this a sync shows every line as changed and buries the content diff.
+# Scoped by extension rather than `**`: marking a whole tree as text overrides
+# git's binary detection, so a future skill shipping an image or a compiled file
+# would have CRLF-like bytes rewritten inside it silently.
+plugin/skills/**/*.md text eol=lf
+plugin/skills/**/*.py text eol=lf

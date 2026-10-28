@@ -1,0 +1,87 @@
+#!/bin/sh
+# SnapCode `snaplogic` launcher (cross-platform, POSIX sh).
+#
+# Lives in the plugin's bin/, which Claude Code adds to the Bash tool's PATH while the
+# plugin is enabled, so a bare `snaplogic ...` inside a session resolves HERE. It
+# forwards to the real CLI that bootstrap.py downloaded into the plugin's persistent
+# data dir (${CLAUDE_PLUGIN_DATA}/bin/snaplogic). The binary cannot live in bin/
+# itself: that dir is replaced on every plugin update, and the binary is per-OS/arch.
+#
+# sh rather than a Python shebang for the same reason as the sibling `slpy` launcher:
+# /bin/sh is the one interpreter that exists on macOS, Linux and Git-Bash alike.
+#
+# If the CLI isn't downloaded yet, it runs the bootstrap once, then forwards.
+
+set -u
+
+# --- PLUGIN_ROOT: CLAUDE_PLUGIN_ROOT if set, else this script's parent-of-bin dir ---
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT"
+else
+  PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+fi
+
+# --- PLUGIN_DATA: must match bootstrap.py's _plugin_data_dir() EXACTLY, or the launcher
+# looks in a different dir than bootstrap downloaded to. Same order as the slpy launcher.
+if [ -n "${CLAUDE_PLUGIN_DATA:-}" ]; then
+  PLUGIN_DATA="$CLAUDE_PLUGIN_DATA"
+else
+  _home="${HOME:-${USERPROFILE:-}}"
+  if [ -d "$_home/.claude/plugins/data" ]; then
+    PLUGIN_DATA="$_home/.claude/plugins/data/snapcode-snapcode"
+  else
+    PLUGIN_DATA="$PLUGIN_ROOT/.data"
+  fi
+fi
+
+# snaplogic.exe on Windows (also under Git-Bash), plain snaplogic elsewhere.
+find_cli() {
+  for _cand in "$PLUGIN_DATA/bin/snaplogic" "$PLUGIN_DATA/bin/snaplogic.exe"; do
+    if [ -x "$_cand" ] || [ -f "$_cand" ]; then
+      printf '%s\n' "$_cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Rejects the Windows Store `python3` alias stub, which exits non-zero on `-c ""`.
+find_python() {
+  for _py in python3 python; do
+    if command -v "$_py" >/dev/null 2>&1 && "$_py" -c "" >/dev/null 2>&1; then
+      printf '%s\n' "$_py"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! REAL_CLI="$(find_cli)"; then
+  if _py="$(find_python)"; then
+    # Bootstrap prints its SessionStart hook JSON on stdout. Sent to stderr so it
+    # never lands in the output of the command the caller actually ran.
+    SNAPCODE_FROM_LAUNCHER=1 "$_py" "$PLUGIN_ROOT/bin/bootstrap.py" >&2 || true
+  else
+    printf '%s\n' "[snapcode] no usable Python found to run bootstrap." >&2
+    printf '%s\n' "          install Python 3 (python.org / brew / winget) and restart." >&2
+  fi
+  if ! REAL_CLI="$(find_cli)"; then
+    printf '%s\n' "[snapcode] the snaplogic CLI is not installed yet and bootstrap did not produce it." >&2
+    printf '%s\n' "          expected: $PLUGIN_DATA/bin/snaplogic (or snaplogic.exe)" >&2
+    exit 1
+  fi
+fi
+
+# Tag the call as SnapCode's; the CLI appends this to its User-Agent. Only when
+# unset: an empty value is the user opting out. bootstrap writes the token, with
+# the plugin version in it, on every session start.
+if [ -z "${SNAPLOGIC_CLIENT+set}" ]; then
+  SNAPLOGIC_CLIENT="$(cat "$PLUGIN_DATA/client_token" 2>/dev/null)"
+  export SNAPLOGIC_CLIENT="${SNAPLOGIC_CLIENT:-snapcode}"
+fi
+
+export UV_TOOL_DIR="$PLUGIN_DATA/tools"
+export UV_TOOL_BIN_DIR="$PLUGIN_DATA/bin"
+export PATH="$PLUGIN_DATA/bin:$PATH"
+
+exec "$REAL_CLI" "$@"
