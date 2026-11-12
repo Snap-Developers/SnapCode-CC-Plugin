@@ -109,10 +109,10 @@ caused the issue.
 
 ## Use a local file as pipeline input
 
-To upload a local file to SLDB so a pipeline can read it:
+To upload a local file to your project's Files so a pipeline can read it:
 
 ```
-Upload sales_data.csv to SLDB at /snaplogic/my-project/
+Upload sales_data.csv to Files in /snaplogic/my-project/
 ```
 
 Then reference that path in your pipeline description when building.
@@ -125,7 +125,7 @@ Expression libraries let you define helper functions once and reuse them across 
 Create a date helpers expression library: today's date, previous month start/end, ISO formatting
 ```
 
-SnapCode generates a `.expr` file, and uploads it to SLDB when you deploy a pipeline that uses it.
+SnapCode generates a `.expr` file, and uploads it to your project's Files when you deploy a pipeline that uses it.
 
 ## Where your files are stored
 

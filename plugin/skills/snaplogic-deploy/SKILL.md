@@ -1,14 +1,14 @@
 ---
 name: snaplogic-deploy
 description: "Deploy, validate, and iteratively fix SnapLogic pipelines on the Control Plane. Covers the full loop: translate .py → .slp, upload supporting files, import to platform, validate, surface errors, fix source, repeat until validation passes."
-tools: Read, Write, Bash, TodoWrite, mcp__plugin_snapcode_snaplogic__import_pipeline, mcp__plugin_snapcode_snaplogic__validate_pipeline, mcp__plugin_snapcode_snaplogic__execute_pipeline, mcp__plugin_snapcode_snaplogic__list_snaplexes, mcp__plugin_snapcode_snaplogic__list_organizations, mcp__plugin_snapcode_snaplogic__save_user_preferences, mcp__plugin_snapcode_snaplogic__upload_sldb
+tools: Read, Write, Bash, TodoWrite, mcp__plugin_snapcode_snaplogic__import_pipeline, mcp__plugin_snapcode_snaplogic__validate_pipeline, mcp__plugin_snapcode_snaplogic__execute_pipeline, mcp__plugin_snapcode_snaplogic__get_pipeline_run_status, mcp__plugin_snapcode_snaplogic__list_snaplexes, mcp__plugin_snapcode_snaplogic__list_organizations, mcp__plugin_snapcode_snaplogic__save_user_preferences, mcp__plugin_snapcode_snaplogic__upload_file
 ---
 
 # SnapLogic Deploy Skill
 
 ## 1. Overview
 
-This skill owns the deploy→validate→fix loop for SnapLogic pipelines on the Control Plane. It picks up where `snaplogic-slpy-gen` leaves off: given a `.py` (SLPy) file, it translates, uploads supporting files, deploys to the platform, validates, surfaces all errors and schema details, and iterates until validation passes.
+This skill owns the deploy→validate→fix loop for SnapLogic pipelines on the Control Plane. It picks up where `snaplogic-slpy-gen` leaves off: given a `.py` (SLPy) file, it translates, uploads supporting files, deploys to the platform, validates, surfaces all errors, and iterates until validation passes.
 
 ### When to Use This Skill
 
@@ -48,7 +48,7 @@ Assets live at `{org}/{project_space}/{project}/{asset}`. `shared` is a special 
 - **Pipeline** — a data-integration flow (stored as SLP/JSON); the unit you import/validate/execute. **Snap** — one processing node *inside* a pipeline (read/transform/write step); not separately addressable.
 - **Snaplex** — the execution engine (a cluster of JCC nodes) that runs pipelines. It is **org-level and shared, not under a project** — so `list_snaplexes` needs the **org**, not a project. Types: **Cloudplex** (SnapLogic-hosted) and **Groundplex** (customer-hosted, e.g. for local-file access).
 - **`snaplex_path` / `runtime_path_id`** — the routing id of a Snaplex, format `<org_id>/rt/<location>/<environment>` (e.g. `snaplogic/rt/cloud/dev`). A Snaplex has both a browse `path` (a label) and a `runtime_path_id`; the MCP `snaplex_path` parameter wants the **`runtime_path_id`**. Discover both via `list_snaplexes`.
-- **SLDB** — SnapLogic's built-in file store (referenced by `sldb:///` URIs). It's the storage layer behind project **Files**: a "File" asset is how SLDB-stored bytes appear in the project tree. `upload_sldb` / `download_sldb_file` operate on it via `org` + `project_path` + file name.
+- **Files** (File assets) — files stored in a project, such as `.expr` libraries, shown under Manager > Files. The platform also calls this store **SLDB**: a pipeline references a file as `sldb:///{org}/{project_path}/{file_name}`. `upload_file` / `download_file` operate on it via `org` + `project_path` + `file_name`.
 - **Account** — an asset holding connection credentials (DB, S3, …) used by snaps. Contains secrets, so it's excluded from project export by default.
 
 ---
@@ -62,13 +62,16 @@ Assets live at `{org}/{project_space}/{project}/{asset}`. `shared` is a special 
 > takes a file does so by **content**, not by path. `Read` the file yourself, then
 > pass its contents:
 >
-> **`import_pipeline` / `validate_pipeline` / `execute_pipeline`:** `Read` the `.slp`
-> and pass its JSON as `slp_content`. Do NOT pass a file path. (`slp_file_path` only
-> exists on the stdio/local-Docker transport; on the cloud MCP it isn't available, and
-> putting a path into `slp_content` fails with
+> **`import_pipeline`:** `Read` the `.slp` and pass its JSON as `slp_content`. Do NOT
+> pass a file path. (`slp_file_path` only exists on the stdio/local-Docker transport;
+> on the cloud MCP it isn't available, and putting a path into `slp_content` fails with
 > `Failed to parse SLP content as JSON: Expecting value: line 1 column 1`.)
 >
-> **`upload_sldb`:** `Read` the file and pass its contents as `file_content`. Do NOT
+> **`validate_pipeline` / `execute_pipeline`:** these take no file at all. They run a
+> pipeline that is already on the platform, identified by `pipeline_name` (Step 6), so
+> always `import_pipeline` first.
+>
+> **`upload_file`:** `Read` the file and pass its contents as `file_content`. Do NOT
 > pass a file path. For text files (`.expr`, `.json`, `.csv`) use the default
 > `encoding='utf-8'`; for binary files, base64-encode the bytes and pass
 > `encoding='base64'`. (`local_file_path` only exists on the stdio transport.)
@@ -78,8 +81,9 @@ Assets live at `{org}/{project_space}/{project}/{asset}`. `shared` is a special 
 >
 > | Tool | Pass this |
 > |---|---|
-> | `import/validate/execute_pipeline` | `slp_content="<Read the .slp, pass its JSON>"` (NOT a path) |
-> | `upload_sldb` | `file_content="<Read the file, pass its contents>"` (+ `encoding`) (NOT a path) |
+> | `import_pipeline` | `slp_content="<Read the .slp, pass its JSON>"` (NOT a path) |
+> | `validate/execute_pipeline` | `pipeline_name` of the already-imported pipeline (no file) |
+> | `upload_file` | `file_content="<Read the file, pass its contents>"` (+ `encoding`) (NOT a path) |
 
 Always follow these steps in order. Never skip a step.
 
@@ -110,24 +114,24 @@ Fix any translation errors before proceeding. Do not deploy a pipeline that fail
 
 ### Step 2 — Pre-flight: upload supporting files
 
-Before importing the pipeline, scan the `.py` source for any files it references and upload them to SLDB. Do this proactively — don't wait for validation to fail.
+Before importing the pipeline, scan the `.py` source for any files it references and upload them to the project's Files. Do this proactively — don't wait for validation to fail.
 
 #### 2a — Expression libraries
 
 Scan for `ExpressionLibraries(expression_library=[...])` in the `.py`. For each `.expr` file found, `Read` it and pass its contents:
 
 ```
-upload_sldb(org="{org}", project_path="{path}", sldb_file_name="{name}.expr", file_content="<the .expr file's contents>")
+upload_file(org="{org}", project_path="{path}", file_name="{name}.expr", file_content="<the .expr file's contents>")
 ```
 
 `.expr` files are text, so the default `encoding='utf-8'` is correct — see the file-passing box above.
 
 #### 2b — Input data files
 
-Scan for `BinaryFileReader`, `FileReader`, or similar snaps with a `file_path` parameter pointing to a local file. For each file found, offer to upload it to SLDB. `Read` the file and pass its contents:
+Scan for `BinaryFileReader`, `FileReader`, or similar snaps with a `file_path` parameter pointing to a local file. For each file found, offer to upload it to the project's Files. `Read` the file and pass its contents:
 
 ```
-upload_sldb(org="{org}", project_path="{path}", sldb_file_name="{name}", file_content="<the file's contents>")
+upload_file(org="{org}", project_path="{path}", file_name="{name}", file_content="<the file's contents>")
 ```
 
 Text files (`.json`, `.csv`, `.jsonl`) use the default `encoding='utf-8'`. For binary files, base64-encode the bytes and pass `encoding='base64'` — see the file-passing box above.
@@ -193,33 +197,42 @@ On success: note the pipeline name returned. Proceed immediately to Step 6 — d
 
 Always validate immediately after import. Never skip this step.
 
+**6a — Start the run:**
+
 ```
 validate_pipeline(pipeline_name="{pipeline_name}", org="{org}", project_path="{path}", snaplex_path="{runtime_path_id}")
 ```
 
-**Always pass `snaplex_path`** — validation will fail without it.
+**Always pass `snaplex_path`** — validation will fail without it. This returns immediately with `details.runtime_id` and `details.status="started"` — the run itself is still in progress when the call returns, not a final result.
+
+**6b — Poll for the result:**
+
+```
+get_pipeline_run_status(org="{org}", runtime_id="{runtime_id}", is_validation=true)
+```
+
+Call this until `details.done` is `true`. Between checks, wait about as long as you expect the run to take (a few seconds for a small pipeline, longer for one that reads or writes a lot of data). Stop and tell the user the run may still be in progress if it isn't done within **5 minutes**.
+
+If `get_pipeline_run_status` isn't available, or you can't read a result from it, stop and give the user the `runtime_id` so they can check the run in Designer. Don't call the SnapLogic REST API directly (for example with `curl` and the user's credentials) to look for the result.
 
 #### Parsing the validation response
 
-The validation response can be very large (100KB+). Extract only these fields — do not process the full response:
+Once `details.done` is `true`, extract only these fields — do not process the full response:
 
-| Field | Where to find it | What to report |
-|-------|-----------------|----------------|
-| `status` / `state` | top level | Completed / Failed |
-| `error_count` | top level | number of errors |
-| `documents_count` | top level | documents processed |
-| `snap_errors` | `snap_statuses` where `error_count > 0` | snap label + error message |
-| `inputs` | `input_views` | list with schemas, or "none" |
-| `outputs` | `output_views` | list with schemas, or "none" |
+| Field | What to report |
+|-------|-----------------|
+| `status` | `completed` / `failed` / `stopped` / `disabled` |
+| `error_count` | number of errors across all snaps |
+| `documents_count` / `error_documents_count` | documents processed / errored |
+| `duration_ms` | how long the run took |
+| `snaps[]` | each has `label`, `state`, and — only when non-empty — `errors` (a capped list of error strings per snap) |
+| `failure_reason` | present only on some run-level failures; a capped list of strings |
 
-**Never report "validation passed" without also reporting inputs, outputs, error count, and any warnings.**
+**Never report "validation passed" without also reporting documents processed, error count, and any snap errors.**
 
-#### Validation passed with no inputs/outputs
+**A failed run is still a successful call** (`success: true`, no top-level `error` key) — always check `details.status`, never assume success just because the call didn't throw.
 
-If validation passes but `input_views` and `output_views` are empty:
-- Report this explicitly.
-- Check if it's expected: pipelines that read/write directly to files (BinaryFileReader/Writer) have no exposed views — this is normal.
-- If the pipeline is expected to have views (e.g. a triggered pipeline), flag it to the user.
+There are no `input_views`/`output_views` (or equivalent schema) fields in this response — don't look for them, and don't tell the user "no inputs/outputs" based on their absence. If the user specifically asks about the pipeline's input/output schema, read the `.slp` file instead; don't infer schema from the validation result.
 
 ### Step 7 — Fix and iterate (if validation fails)
 
@@ -249,20 +262,22 @@ After each iteration, report:
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `Failed to parse SLP content as JSON: Expecting value: line 1 column 1` | A file **path** was passed as `slp_content` (the cloud MCP has no `slp_file_path`) | `Read` the `.slp` and pass its JSON **contents** as `slp_content`, not a path |
-| `slp_content is required` / unexpected `slp_file_path` argument | Called `import/validate/execute_pipeline` with `slp_file_path` on the cloud MCP | `Read` the `.slp` and pass `slp_content` instead |
-| `file_content is required` / unexpected `local_file_path` argument (upload_sldb) | Called `upload_sldb` with `local_file_path` on the cloud MCP | `Read` the file and pass its contents as `file_content` (use `encoding='base64'` for binary) |
+| `slp_content is required` / unexpected `slp_file_path` argument | Called `import_pipeline` with `slp_file_path` on the cloud MCP | `Read` the `.slp` and pass `slp_content` instead |
+| `You must provide either pipeline_name or pipeline_snode_id` | Called `validate_pipeline`/`execute_pipeline` with `slp_content` or without naming a pipeline | `import_pipeline` first, then pass `pipeline_name` (Step 6) |
+| `file_content is required` / unexpected `local_file_path` argument (upload_file) | Called `upload_file` with `local_file_path` on the cloud MCP | `Read` the file and pass its contents as `file_content` (use `encoding='base64'` for binary) |
 | `permission denied` / `path does not exist` | Wrong org or path | Re-run `list_snaplexes` with explicit org |
 | `pipeline already exists` | Pipeline with same name exists at that path | Use `duplicate_check=False` to overwrite, or ask user to rename |
+| `401` / `Authentication required` from `import_pipeline` while read tools (`list_assets`, `list_accounts`, …) still work | An account label in the `.slp` is a path (contains `/`), not the bare account name; the platform's name lookup breaks on it and reports that as an auth failure. Current slpy binds a path by its last segment, so this means an older slpy or a hand-edited `.slp` | Not a login problem — do not re-login. Put the bare name from `list_accounts` in `Account(label=...)` in the `.py`, re-translate (`snaplogic slpy upgrade` if the NOTE about paths never appears), re-import |
 
-### Validation errors
+### Validation/execute errors
 
 | Error pattern | Likely cause | Fix |
 |---------------|--------------|-----|
-| `Unable to import expression library: {name}.expr` | `.expr` file not uploaded to SLDB | Upload via `upload_sldb` (Step 2a), re-validate |
+| `Unable to import expression library: {name}.expr` | `.expr` file not uploaded to the project's Files | Upload via `upload_file` (Step 2a), re-validate |
 | `Missing property value` on `filePath` | File path is empty — not set at all | Check the snap config in `.py` has a `file_path` value |
-| `No snaplex configured` | `snaplex_path` not passed to `validate_pipeline` | Always pass `snaplex_path` explicitly |
-| `output view missing` | Mapper or Transform snap has no output view defined | Add output view in the snap config |
-| `input view missing` | First snap or router has no input defined | Add input view |
+| `No snaplex configured` | `snaplex_path` not passed | Always pass it explicitly (Step 3) |
+| `runtime_id is required` | Called `get_pipeline_run_status` without a `runtime_id` | Use the `runtime_id` from the `validate_pipeline`/`execute_pipeline` response's `details` |
+| Run never reaches `details.done=true` within 5 minutes | Run genuinely stuck, or the wrong `is_validation` value picked the wrong run store | Double check `is_validation` matches which tool started the run; otherwise tell the user it may still be running and give them the `runtime_id` to check later |
 | `snap not found` | Invalid snap name survived translation | Check snap name against pygen |
 | `expression error` | Invalid SEL expression | Fix expression syntax in `.py`, re-translate |
 | `type mismatch` | Incompatible connection between snaps | Add appropriate formatter/parser snap |
@@ -280,15 +295,13 @@ Pipeline  : {pipeline_name}
 Org/Path  : {org}/{path}
 Snaplex   : {runtime_path_id}
 Status    : Validation passed ✓  (or: Failed after {N} iterations)
-Documents : {documents_count}
+Documents : {documents_count} ({error_documents_count} errored)
+Duration  : {duration_ms} ms
 
-Inputs    : {list with schemas, or "none (expected — no exposed views)"}
-Outputs   : {list with schemas, or "none (expected — no exposed views)"}
-Warnings  : {list or "none"}
+Snap errors : {list of "{label}: {errors}" per snap with errors, or "none"}
 ```
 
 After a successful deploy, ask the user:
 - **Save preferences:** "Would you like to save `{org}`, `{path}`, and `{snaplex}` as defaults for future deploys?"
   Only call `save_user_preferences` if the user says yes.
-- **Execute:** "Would you like to run it now with `execute_pipeline`?"
-- **Schema concern:** If inputs/outputs look unexpected — "The schema looks unexpected — want to revisit the Mapper output?"
+- **Execute:** "Would you like to run it now?" If yes — call `execute_pipeline` the same way as Step 6a, then poll `get_pipeline_run_status(org="{org}", runtime_id="{runtime_id}", is_validation=false)` the same way as Step 6b.

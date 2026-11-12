@@ -211,13 +211,29 @@ With auto-update on, Claude Code checks for a new version within 10 minutes of t
 message in each session. When it installs one, it shows `Plugin updated: snapcode · Run
 /reload-plugins to apply`: run `/reload-plugins` to use it now, or it loads on your next launch.
 
-**To update manually**, run these two commands (the first fetches the latest from the repo, the
-second applies it), then run `/reload-plugins`:
+**To update manually**, use one of the following ways.
+
+**Inside a Claude Code session:**
+
+Run `/plugin`, open **Installed**, select **snapcode**, then **Update now**. This fetches the
+latest version, installs it and reloads the plugin in this session, so you can keep working with
+the new version right away. To see the welcome message and checklist for the new version, run
+`/clear` (this also clears the conversation); otherwise they show when you next start a session.
+
+**Outside Claude Code, in a terminal:**
+
+Run these two commands. The first fetches the latest from the repo, the second installs it:
 
 ```bash
 claude plugin marketplace update snapcode
 claude plugin update snapcode@snapcode
 ```
+
+After the update succeeds, start a new Claude Code session. It uses the new version and shows it
+in the welcome message and checklist.
+
+Either way, other Claude Code sessions that are already open keep the old version until you run
+`/reload-plugins` in them or restart them.
 
 > The `slpy` and `snaplogic` CLIs are separate and update on their own: the plugin
 > refreshes `slpy` daily, and `snaplogic` updates itself when a newer version is out,

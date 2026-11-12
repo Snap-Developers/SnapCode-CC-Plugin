@@ -768,3 +768,62 @@ p.connect(src=snap_1, dst=snap_archive, src_view_id='output1', src_view_label='A
   label bound to a `FlowPipelineExecute(pipeline=...)` reference or a `pipeline_path`, a
   `TOOL_<capability>` name, or any label a skill tells you to carry verbatim (the agent and MCP
   bundles do). Those are contracts; this rule does not reach them.
+
+### Rule 14: Execution Order — Stage Dependent Work with FlowGate
+
+SnapLogic starts every snap when the pipeline starts and streams documents between them. A chain
+only orders *documents*, not *work*: the second snap starts on the first document, before the first
+snap has finished. So:
+
+- **Branches have no order.** Two unconnected chains, or the outputs of a `FlowCopy`/`FlowRouter`,
+  run at the same time.
+- **A snap with an input view runs once per input document.** A `TransformJSONGenerator` fed by an
+  insert of N rows emits its whole template N times. An Execute or `FlowPipelineExecute` snap fed that way
+  runs its SQL, or its child pipeline, N times (Pipeline Execute's defaults start one child run per document).
+- **`FlowGate` is the wait step.** It waits until every input view has ended, then emits ONE
+  document. Sort and GroupByN with group size 0 also buffer, but only Gate joins several inputs.
+  Set `output_doc_content='Document count and final document for each input'`: the default, "All input documents",
+  holds every row in memory and passes them all on as one document, while this mode keeps a count
+  per input and emits `{"input0": {"count": N, "final_document": {...}}}`. For an audit row or a
+  notification, read the row count as `$input0.count`; never keep the default just to take a list's length. Leave `ignore_empty_stream` off: when it is
+  on and a stage writes no rows, the Gate emits nothing and every later stage silently never runs.
+  The flip side: with it off, a Gate also releases when the step before it failed and routed its
+  error to an error view (`error_behavior='continue'`; the run still completes). So a step that must
+  succeed before the next stage keeps the default `error_behavior='fail'` ("Stop Pipeline Execution"
+  in Designer), which fails the run instead. `error_behavior='ignore'` discards the error.
+- **A database write snap commits before its output ends**, so a Gate after it sees committed rows.
+  One exception, only when the account's Auto commit is off (it is on by default): a row routed to
+  the error view rolls back all of that snap's rows, and the Gate still releases. With Auto commit on,
+  good rows stay committed and only the bad rows go to the error view.
+
+Stage the work when a step MUST finish before the next starts: create tables before loading them,
+parent rows before child rows (foreign-key order), delete children before parents, write before
+read-back, child pipeline A before child pipeline B (two `FlowPipelineExecute` calls), one
+notification after a batch.
+
+```python
+# WRONG — independent chains race: orders can land before customers (FK error)
+#   gen_customers -> insert_customers        gen_orders -> insert_orders
+# WRONG — gen_orders runs once per customer row: orders written N times (duplicate keys)
+#   gen_customers -> insert_customers -> gen_orders -> insert_orders
+# CORRECT — the Gate emits one document after every customer row is written
+#   create_tables -> gate_ddl -> gen_customers -> insert_customers -> gate_customers -> gen_orders -> insert_orders
+gate_customers = FlowGate(label='Customers Loaded', output_doc_content='Document count and final document for each input')
+p.connect(src=insert_customers, dst=gate_customers, src_view_id='output0', dst_view_id='input0',
+          src_output_type='document', dst_input_type='document')
+p.connect(src=gate_customers, dst=gen_orders, src_view_id='output0', dst_view_id='input0',
+          src_output_type='document', dst_input_type='document')
+```
+
+Tables MAY run in parallel within one stage (a `FlowCopy` after the previous Gate, one chain per
+table, all chains joined into ONE Gate with `input0`, `input1`, ...) only if none of them references
+another table in that stage. Group tables by foreign-key depth: depth 0 references nothing, depth 1
+references only depth 0, and so on. Run one stage per depth, with a Gate between stages: in that order
+for CREATE TABLE and loads, and in reverse for deletes. When unsure, use a plain chain with a Gate after
+each table: it is never wrong, only slower.
+
+**Do not over-apply.** A single-table load, or a straight read → transform → write, needs no Gate.
+
+**Diagnosing a failed run.** Foreign-key or duplicate-key errors, or a row count that grows with each
+stage, point at wiring, not at concurrent runs or bad data. Check the rule above before changing
+anything else.

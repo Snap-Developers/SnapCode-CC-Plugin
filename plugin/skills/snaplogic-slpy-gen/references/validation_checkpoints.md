@@ -208,6 +208,8 @@ Never report a pipeline as validated while a warning of either kind is still pri
 
 `NOTE` lines on stderr are informational, not blocking: `<snap> (<Snap>): below minimum output views, assigned 1 open output view (output0); connect it or confirm nothing is meant to consume this output` means slpy declared an open view so the Snap meets its minimum. An assigned **output** view is fine unless a destination was intended; an assigned **input** view means a leg is unwired — connect it or confirm the input is meant to be open. Mention it to the user; do not invent a destination to silence it.
 
+`<snap>: account label '<path>' is a path; bound by name '<name>' instead` means slpy already bound the right account by its name. Still change the source to `Account(label='<name>')` so the `.py` matches the `.slp`.
+
 **Under `-strict` every reported error is fatal.** slpy raises `Strict mode: N error(s) … Pipeline was not generated` and writes **no `.slp`**, so there is no such thing as a warning you can leave behind. "Cosmetic" describes how cheap the fix is, never whether you can skip it:
 
 **FIX and re-translate — all of these:**

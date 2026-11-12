@@ -7,7 +7,7 @@ There are two valid binding forms: a **static** binding to one specific account 
 ### Finding an account
 
 1. **Check the snap's accepted types** — the snap docstring lists `ref_class_id` enum values
-2. **Discover accounts on the platform** — call `list_accounts(org, project_path)` and filter the results by `class_id` against the snap's enum
+2. **Discover accounts on the platform** — call `list_accounts(org, project_path)` and filter the results by `class_id` against the snap's enum. Bind the match by its `label` field, the bare account name: `Account(label='<label>')`. Never use its `path`; the platform finds accounts by name only.
 
 ### Static binding — `Account(...)`
 ```python
